@@ -560,7 +560,7 @@ namespace Cruce
                             if (movePending && now - lastMoveSend >= MinMoveIntervalUs) send = true;
                             long rto = Math.Max(6000, (long)(rttEwma * 1.5) + 2000);
                             if (outQ.Count > 0 && now - lastDataSend >= rto) send = true;
-                            long ka = (Active || now < fastUntil) ? 20000 : 250000;
+                            long ka = (Active || now < fastUntil) ? 20000 : 30000; // always keep the laptop radio awake while linked
                             if (now - lastDataSend >= ka) send = true;
                             if (send) SendDataLocked(now);
                             if (now - lastHelloSend >= 2000000) { helloPeer = true; peerEp = peer.Ep; }

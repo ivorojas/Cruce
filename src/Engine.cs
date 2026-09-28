@@ -22,7 +22,7 @@ namespace Cruce
     {
         public static readonly IntPtr Tag = new IntPtr(0x43525543); // marks our own injected input
         const int CornerGuard = 6;
-        const long WarmUs = 1500000, SilentReturnUs = 1200000;
+        const long WarmUs = 1500000, SilentReturnUs = 3000000;
 
         readonly object gate = new object();
         readonly Config cfg;
@@ -720,10 +720,12 @@ namespace Cruce
             }
             if (mode == Mode.Local) return;
             var l = link;
-            if (l == null || l.SinceHeardUs(now) <= SilentReturnUs) return;
+            if (l == null) return;
+            long silent = Math.Min(l.SinceHeardUs(now), mode == Mode.Remote ? now - enteredAt : long.MaxValue);
+            if (silent <= SilentReturnUs) return;
             lock (gate)
             {
-                if (mode == Mode.Remote) ReturnLocalLocked(park, false, "la otra PC no responde hace 1.2 s");
+                if (mode == Mode.Remote) ReturnLocalLocked(park, false, "la otra PC no responde hace 3 s");
                 else if (mode == Mode.Controlled) { ReleaseInjectedLocked(); mode = Mode.Local; l.Active = false; }
             }
         }

@@ -29,13 +29,13 @@ namespace Cruce
 
         static string ProbeWifi()
         {
-            var psi = new ProcessStartInfo("netsh", "wlan show interfaces") { UseShellExecute = false, RedirectStandardOutput = true, CreateNoWindow = true, StandardOutputEncoding = Encoding.GetEncoding(850) };
+            var psi = new ProcessStartInfo("netsh", "wlan show interfaces") { UseShellExecute = false, RedirectStandardOutput = true, CreateNoWindow = true, StandardOutputEncoding = Encoding.UTF8 };
             string o;
             using (var p = Process.Start(psi)) { o = p.StandardOutput.ReadToEnd(); p.WaitForExit(5000); }
             if (!Regex.IsMatch(o, @"(?im)^\s*(SSID)\s*:")) return "wifi: no (cable)";
             Func<string, string> g = pat => { var m = Regex.Match(o, @"(?im)^\s*(" + pat + @")\s*:\s*(.+)$"); return m.Success ? m.Groups[2].Value.Trim() : "?"; };
             return string.Format("wifi señal {0}, banda {1}, canal {2}, rx {3} / tx {4} Mbps",
-                g("Se(ñ|n)al|Signal"), g("Banda|Band"), g("Canal|Channel"), g("Velocidad de recepci(ó|o)n \\(Mbps\\)|Receive rate \\(Mbps\\)"), g("Velocidad de transmisi(ó|o)n \\(Mbps\\)|Transmit rate \\(Mbps\\)"));
+                g("Se.{1,2}al|Signal"), g("Banda|Band"), g("Canal|Channel"), g("Velocidad de recepci.{1,2}n \\(Mbps\\)|Receive rate \\(Mbps\\)"), g("Velocidad de transmisi.{1,2}n \\(Mbps\\)|Transmit rate \\(Mbps\\)"));
         }
 
         public static void LogStartup(Config c, bool admin)

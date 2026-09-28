@@ -96,6 +96,7 @@ namespace Cruce
                 if (text != null && text.Length > 0 && text.Length < 8 * 1024 * 1024)
                 {
                     var bytes = Encoding.UTF8.GetBytes(text);
+                    if (Duplicate("txt" + text)) return;
                     StartSend(addr, s => WriteFrame(s, K_TEXT, bytes, 0, bytes.Length));
                 }
                 return;
@@ -109,8 +110,17 @@ namespace Cruce
                 enc.Frames.Add(BitmapFrame.Create(img));
                 byte[] png;
                 using (var ms = new MemoryStream()) { enc.Save(ms); png = ms.ToArray(); }
-                if (png.Length < 64 * 1024 * 1024) StartSend(addr, s => WriteFrame(s, K_IMAGE, png, 0, png.Length));
+                if (png.Length < 64 * 1024 * 1024 && !Duplicate("img" + png.Length + ":" + Convert.ToBase64String(SHA256.Create().ComputeHash(png)))) StartSend(addr, s => WriteFrame(s, K_IMAGE, png, 0, png.Length));
             }
+        }
+
+        string lastKey; DateTime lastKeyAt;
+
+        bool Duplicate(string key)
+        {
+            bool dup = key == lastKey && (DateTime.UtcNow - lastKeyAt).TotalMilliseconds < 1500;
+            lastKey = key; lastKeyAt = DateTime.UtcNow;
+            return dup;
         }
 
         void StartSend(IPAddress addr, Action<Stream> body)
