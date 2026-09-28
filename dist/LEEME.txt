@@ -1,0 +1,31 @@
+CRUCE 1.0 — un mouse y un teclado para tus dos PCs
+====================================================
+
+INSTALAR (en las dos PCs)
+1. Cerrá Mouse Without Borders en las dos (ícono de la bandeja > Salir). Si queda
+   abierto, los dos programas se pelean por el mouse.
+2. Copiá Cruce.exe a cada PC (pendrive, OneDrive, lo que quieras) y abrilo.
+3. Si Windows pregunta por el Firewall: "Permitir acceso" (tildá redes privadas Y públicas).
+4. Poné la MISMA clave en las dos. Se encuentran solas en tu red en 1-2 segundos.
+5. Elegí dónde está la otra PC (Izquierda/Derecha/...). Se copia sola a la otra.
+6. Activá "Iniciar con Windows (con permisos de admin)" en las dos. Así arranca solo
+   y además puede manejar ventanas de administrador. Va a pedir permiso una vez.
+
+USO
+- Llevá el mouse al borde y pasa a la otra PC. El teclado va a donde está el mouse.
+- Ctrl + Alt + F12: salta a la otra PC y vuelve, sin mover el mouse.
+- Si tocás el mouse/teclado de la PC que está siendo controlada, recupera el control al instante.
+- Copiar/pegar texto, imágenes y ARCHIVOS entre PCs con Ctrl+C / Ctrl+V normales.
+- Si la conexión se corta, el mouse vuelve solo a su PC en ~1 segundo (nunca queda "atrapado").
+
+SI NO SE ENCUENTRAN
+- Las dos tienen que estar en la misma red (mismo router; cable o WiFi da igual).
+- Escribí la IP de la otra PC en "IP de la otra PC" (aparece abajo a la derecha en la otra).
+- Revisá que el Firewall no esté bloqueando Cruce (puerto 47810 UDP/TCP).
+
+PARA QUE EL WIFI DE LA NOTEBOOK VUELE (opcional, suma)
+- Conectala a la red de 5 GHz si tu router tiene.
+- Administrador de dispositivos > Adaptadores de red > tu placa WiFi > Propiedades >
+  Administración de energía > destildá "Permitir que el equipo apague este dispositivo".
+
+Registro de diagnóstico: %APPDATA%\Cruce\cruce.log
