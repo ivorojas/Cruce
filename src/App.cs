@@ -78,7 +78,7 @@ namespace Cruce
 
     public sealed class AppController
     {
-        public const string Version = "1.7";
+        public const string Version = "1.8";
 
         readonly Application app;
         public readonly Config Cfg;
@@ -111,6 +111,8 @@ namespace Cruce
             if (!Engine.HooksOk) LinkError = "No se pudo capturar el mouse/teclado";
             Diag.Start();
             Diag.LogStartup(Cfg, IsElevated);
+            WifiNative.Start();
+            StartWatchers();
             RestartLink();
 
             tray = new Tray(this);
@@ -198,6 +200,41 @@ namespace Cruce
             win.Topmost = true; win.Topmost = false;
         }
 
+        double uiHangMs;
+        readonly object uiGate = new object();
+
+        /// <summary>Power/session events and a watchdog that notices if the UI thread hangs.</summary>
+        void StartWatchers()
+        {
+            Microsoft.Win32.SystemEvents.PowerModeChanged += (s, e) =>
+            {
+                Log.Info("ENERGÍA: {0}", e.Mode == Microsoft.Win32.PowerModes.Suspend ? "SUSPENDIENDO" : e.Mode == Microsoft.Win32.PowerModes.Resume ? "volvió de suspensión" : "cambio de estado (batería/enchufe)");
+                Flight.Add(Flight.K_MODE, 100 + (int)e.Mode, 0);
+                if (e.Mode == Microsoft.Win32.PowerModes.Resume) WifiNative.SetLowLatency(true);
+            };
+            Microsoft.Win32.SystemEvents.SessionSwitch += (s, e) => Log.Info("SESIÓN: {0}", e.Reason);
+            Microsoft.Win32.SystemEvents.DisplaySettingsChanged += (s, e) => Log.Info("PANTALLA: cambió la configuración de monitores");
+            Engine.TakeUiHang = () => { lock (uiGate) { var v = uiHangMs; uiHangMs = 0; return v; } };
+
+            new Thread(() =>
+            {
+                while (true)
+                {
+                    Thread.Sleep(2000);
+                    var sw = Stopwatch.StartNew();
+                    var op = app.Dispatcher.BeginInvoke(DispatcherPriority.Send, new Action(() => { }));
+                    if (op.Wait(TimeSpan.FromSeconds(30)) != DispatcherOperationStatus.Completed) { Log.Info("UI COLGADA más de 30 s"); continue; }
+                    long ms = sw.ElapsedMilliseconds;
+                    if (ms > 250)
+                    {
+                        lock (uiGate) uiHangMs += ms;
+                        Log.Info("UI: la ventana de Cruce estuvo trabada {0} ms", ms);
+                        Flight.Add(Flight.K_UI, (int)ms, 0);
+                    }
+                }
+            }) { IsBackground = true, Priority = ThreadPriority.BelowNormal, Name = "cruce-uiwatch" }.Start();
+        }
+
         public void CheckUpdates(bool install)
         {
             Updater.CheckAsync(install, () => Engine.Mode == Mode.Local, () => app.Dispatcher.BeginInvoke(new Action(Exit)));
@@ -224,6 +261,7 @@ namespace Cruce
             if (link != null) link.Dispose();
             if (clip != null) clip.Dispose();
             Engine.Dispose();
+            WifiNative.Stop();
             CursorHider.Restore();
             win.ReallyClose = true;
             win.Close();

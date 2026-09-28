@@ -195,6 +195,7 @@ namespace Cruce
                 moveSeq++;
                 mx = x; my = y;
                 long now = NowUs();
+                moveSetAt = now;
                 if (now - lastMoveSend >= MinMoveIntervalUs) SendDataLocked(now);
                 else movePending = true;
             }
@@ -248,6 +249,10 @@ namespace Cruce
                 cnt++;
             }
             w.B[countPos] = (byte)cnt;
+            // Trailing diagnostics (older versions ignore trailing bytes): how old the position is when it leaves.
+            uint age = hasMove ? (uint)Math.Min(uint.MaxValue, Math.Max(0, now - moveSetAt)) : 0;
+            w.U32(age);
+            if (hasMove && moveSeq != lastTxSeq) { lastTxSeq = moveSeq; Flight.Add(Flight.K_TX, (int)Math.Min(int.MaxValue, age), 0); }
             movePending = false;
             if (hasMove) lastMoveSend = now;
             lastDataSend = now;
@@ -364,6 +369,7 @@ namespace Cruce
             hasMove = false; movePending = false; moveSeq = 0;
             anyInMove = false; lastInMoveSeq = 0;
             peerTs = 0;
+            offValid = false; prevMoveRx = 0;
         }
 
         void OnHello(byte[] p, IPEndPoint ep, uint sid, long ctr)
@@ -432,6 +438,7 @@ namespace Cruce
             uint dst = r.U32();
             List<Rel> deliver = null;
             bool doMove = false, sendAck = false, needHello = false;
+            long stutterIncident = 0;
             int x = 0, y = 0;
             long now = NowUs();
             lock (gate)
@@ -457,6 +464,14 @@ namespace Cruce
                     {
                         uint rtt = unchecked((uint)now - echo - hold);
                         if (rtt < 5000000) AddRttLocked(rtt, now);
+                        // NTP-style clock offset (peer = me + offset), trusting the lowest-RTT sample of the last 10 s.
+                        int t1 = unchecked((int)echo), t4 = unchecked((int)(uint)now), t3 = unchecked((int)ts), t2 = unchecked(t3 - (int)hold);
+                        int rs = unchecked((t4 - t1) - (int)hold);
+                        if (rs >= 0 && rs < 5000000 && (!offValid || rs <= offBestRtt || now - offAt > 10000000))
+                        {
+                            offset = unchecked(((t2 - t1) + (t3 - t4)) / 2);
+                            offBestRtt = rs; offAt = now; offValid = true;
+                        }
                     }
                     peerTs = ts == 0 ? 1 : ts;
                     peerTsAt = now;
@@ -496,12 +511,59 @@ namespace Cruce
                         }
                         else if (!inBuf.ContainsKey(q.Seq) && inBuf.Count < 4000) inBuf[q.Seq] = q;
                     }
+
+                    // ---- per-packet timing diagnostics
+                    uint capAge = r.Left >= 4 ? r.U32() : 0;
+                    int owd = offValid ? Math.Max(0, unchecked((int)(uint)now - (int)ts + offset)) : -1;
+                    Flight.Add(Flight.K_RX, owd, (int)Math.Min(int.MaxValue, now - lastAnyRx));
+                    lastAnyRx = now;
+                    if (doMove)
+                    {
+                        if (owd >= 0) Bucket(owdHist, owd);
+                        Bucket(capHist, (int)Math.Min(int.MaxValue, capAge));
+                        if (prevMoveRx != 0)
+                        {
+                            int dSend = unchecked((int)ts - prevMoveTs);
+                            long dRecv = now - prevMoveRx;
+                            long late = dRecv - dSend;
+                            if (dSend >= 0 && dSend < 20000 && late > 30000)
+                            {
+                                minStutters++;
+                                if (late > minStutterMax) minStutterMax = late;
+                                Flight.Add(Flight.K_STUTTER, (int)Math.Min(int.MaxValue, dRecv), dSend);
+                                if (late > 120000) stutterIncident = late;
+                            }
+                        }
+                        prevMoveTs = unchecked((int)ts);
+                        prevMoveRx = now;
+                    }
                 }
             }
+            if (stutterIncident > 0) Flight.Incident("tiron", string.Format("el movimiento se trabó {0:0} ms (la red entregó los paquetes amontonados)", stutterIncident / 1000.0));
             if (needHello) { SendHello(new[] { ep }, false); return; }
             if (deliver != null) foreach (var q in deliver) h.OnReliable(q.Type, q.Data);
             if (doMove) h.OnMove(x, y);
             if (sendAck) SendData();
+        }
+
+        // one-way timing (clock offset to the peer) and stutter detection
+        int offset, offBestRtt;
+        bool offValid;
+        long offAt, lastAnyRx, prevMoveRx, moveSetAt, minStutters, minStutterMax;
+        int prevMoveTs;
+        uint lastTxSeq;
+        readonly int[] owdHist = new int[1001], capHist = new int[1001]; // 250 µs buckets, last = overflow
+
+        static void Bucket(int[] h, int us) { h[Math.Min(h.Length - 1, us / 250)]++; }
+
+        static double Pct(int[] h, double q, out double max)
+        {
+            long total = 0; max = -1;
+            for (int i = 0; i < h.Length; i++) { total += h[i]; if (h[i] > 0) max = i * 0.25; }
+            if (total == 0) return -1;
+            long target = (long)(total * q), acc = 0;
+            for (int i = 0; i < h.Length; i++) { acc += h[i]; if (acc > target) return i * 0.25; }
+            return max;
         }
 
         // per-minute aggregates for the diagnostic log
@@ -522,6 +584,12 @@ namespace Cruce
                 }
                 long tot = minLost + minRecv;
                 r.Spikes = (int)minSpikes; r.LossPct = tot > 0 ? 100.0 * minLost / tot : 0; r.Packets = (int)minPkts;
+                double mx;
+                r.OwdP50 = Pct(owdHist, 0.5, out mx); r.OwdP95 = Pct(owdHist, 0.95, out mx); r.OwdMax = mx;
+                r.CaptureP95 = Pct(capHist, 0.95, out mx);
+                r.Stutters = (int)minStutters; r.StutterMaxMs = minStutterMax / 1000.0;
+                Array.Clear(owdHist, 0, owdHist.Length); Array.Clear(capHist, 0, capHist.Length);
+                minStutters = 0; minStutterMax = 0;
                 Array.Clear(minHist, 0, minHist.Length);
                 minCount = minSumUs = minMaxUs = minLost = minRecv = minPkts = minSpikes = 0;
                 return any;
@@ -532,6 +600,8 @@ namespace Cruce
         {
             minHist[Math.Min(1000, (int)(us / 1000))]++;
             minCount++; minSumUs += us; if (us > minMaxUs) minMaxUs = us;
+            Flight.Add(Flight.K_RTT, (int)us, 0);
+            if (us > 150000 && Active) Flight.Incident("pico", string.Format("ida y vuelta de {0:0} ms mientras usabas la otra PC", us / 1000.0));
             if (us > 30000)
             {
                 minSpikes++;

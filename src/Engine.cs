@@ -159,6 +159,12 @@ namespace Cruce
                 var m = (MSLLHOOKSTRUCT*)l;
                 if ((m->flags & Native.LLMHF_INJECTED) == 0 || (cfg.TestAcceptInjected && m->dwExtraInfo != Tag))
                 {
+                    if (mode == Mode.Remote && w.ToInt32() == Native.WM_MOUSEMOVE)
+                    {
+                        int delay = unchecked(Environment.TickCount - (int)m->time);
+                        Diag.HookDelay(delay);
+                        if (delay > 15) Flight.Add(Flight.K_HOOK, delay, 0);
+                    }
                     bool block = false;
                     try { block = OnMouse(w.ToInt32(), m->pt.X, m->pt.Y, m->mouseData); }
                     catch (Exception ex) { Log.Error(ex, "mouse hook"); }
@@ -373,6 +379,7 @@ namespace Cruce
             enteredAt = Link.NowUs();
             var pp = peer;
             Log.Info("CRUCE a {0} en {1:0},{2:0} (salida {3},{4})", pp != null ? pp.Name : "?", rx, ry, park.X, park.Y);
+            Flight.Add(Flight.K_MODE, (int)Mode.Remote, 0);
         }
 
         void RemoteMoveLocked(int x, int y)
@@ -431,6 +438,8 @@ namespace Cruce
             remoteButtons = 0;
             mode = Mode.Local;
             Log.Info("VUELTA a esta PC en {0},{1} ({2}); estuvo {3:0.0} s en la otra", pt.X, pt.Y, reason, (Link.NowUs() - enteredAt) / 1e6);
+            Flight.Add(Flight.K_MODE, (int)Mode.Local, 0);
+            if (reason.Contains("no responde")) Flight.Incident("congelado", reason);
             Native.SetCursorPos(pt.X, pt.Y);
             CursorHider.Show();
         }
@@ -562,6 +571,7 @@ namespace Cruce
         public void OnPeerDown()
         {
             PeerInfo old;
+            if (mode != Mode.Local) Flight.Incident("desconexion", "se perdió la conexión mientras usabas la otra PC");
             lock (gate) { old = peer; DropSessionLocked(); peer = null; edgesValid = false; }
             var n = Notify;
             if (n != null && old != null) n("Se desconectó " + old.Name);
@@ -689,7 +699,9 @@ namespace Cruce
                 ClampLocal(ref x, ref y);
                 injX = x; injY = y;
             }
+            long t0 = System.Diagnostics.Stopwatch.GetTimestamp();
             Inject.Move(x, y);
+            Diag.InjectTime(System.Diagnostics.Stopwatch.GetTimestamp() - t0);
         }
 
         public void OnTick(long now)
@@ -714,6 +726,7 @@ namespace Cruce
                 if (GetLastInputInfo(ref lii) && (int)(lii.dwTime - (uint)lastHookTick) > 1500 && hookThreadId != 0)
                 {
                     Log.Info("HOOK MUERTO: hubo input que la captura no vio ({0} ms). Reenganchando.", (int)(lii.dwTime - (uint)lastHookTick));
+                    Flight.Incident("hook_muerto", "Windows dejó de pasarle el mouse/teclado a Cruce (pantalla segura, bloqueo o hook desenganchado)");
                     lastHookTick = Environment.TickCount;
                     Native.PostThreadMessage(hookThreadId, WM_REHOOK, IntPtr.Zero, IntPtr.Zero);
                 }
@@ -722,29 +735,8 @@ namespace Cruce
             if (now - lastSummary > 60000000)
             {
                 lastSummary = now;
-                var lk2 = link;
-                var row = new MinuteRow { Time = DateTime.Now, Pc = cfg.Name };
-                double cpuSys, cpuApp;
-                Diag.TakeCpu(out cpuSys, out cpuApp);
-                int gwCount, gwFails; double gwAvg; long gwP95, gwMax;
-                Diag.TakeRouter(out gwCount, out gwAvg, out gwP95, out gwMax, out gwFails);
-                long act = Interlocked.Exchange(ref activeUs, 0);
-                if (lk2 != null && peer != null && lk2.TakeMinute(row))
-                {
-                    long cr = Crossings;
-                    row.ActiveS = act / 1e6; row.Crossings = (int)(cr - lastCrossings); lastCrossings = cr;
-                    row.CpuSys = cpuSys; row.CpuApp = cpuApp;
-                    row.RouterAvg = gwAvg; row.RouterP95 = gwP95; row.RouterMax = gwMax; row.RouterFails = gwFails;
-                    var wf = Diag.Wifi;
-                    if (wf.OnWifi) { row.Signal = wf.Signal; row.Band = wf.Band; row.Channel = wf.Channel; row.RxMbps = wf.RxMbps; row.SameCh = wf.SameChannel; row.Overlap = wf.Overlapping; row.NeighborMax = wf.NeighborMax; }
-                    row.Stalls = Interlocked.Exchange(ref Diag.Stalls, 0); row.SlowHooks = Interlocked.Exchange(ref Diag.SlowHooks, 0); row.Blocked = Interlocked.Exchange(ref Diag.InjectBlocked, 0);
-                    row.Classify();
-                    string csv = row.ToCsv();
-                    Metrics.Append(csv);
-                    Log.Info("RESUMEN {0}: rtt {1:0.0}/{2:0}/{3:0} ms (prom/p95/max), picos {4}, pérdida {5:0.0}%, router {6}/{7} ms, usando {8:0}s, cruces {9}, {10}, causa={11}",
-                        cfg.Name, row.RttAvg, row.RttP95, row.RttMax, row.Spikes, row.LossPct, row.RouterAvg, row.RouterP95, row.ActiveS, row.Crossings, Diag.WifiShort(), row.Cause);
-                    lk2.QueueReliable(Ev.LogLine, System.Text.Encoding.UTF8.GetBytes("CSV|" + csv));
-                }
+                // Built on the thread pool: process enumeration, file I/O etc. must never delay this timer thread.
+                ThreadPool.QueueUserWorkItem(_ => { try { BuildMinute(); } catch (Exception ex) { Log.Error(ex, "resumen"); } });
             }
             if (mode == Mode.Local) return;
             var l = link;
@@ -756,6 +748,41 @@ namespace Cruce
                 if (mode == Mode.Remote) ReturnLocalLocked(park, false, "la otra PC no responde hace 3 s");
                 else if (mode == Mode.Controlled) { ReleaseInjectedLocked(); mode = Mode.Local; l.Active = false; }
             }
+        }
+
+        public static Func<double> TakeUiHang;
+
+        void BuildMinute()
+        {
+            var lk2 = link;
+            var row = new MinuteRow { Time = DateTime.Now, Pc = cfg.Name };
+            double cpuSys, cpuApp;
+            Diag.TakeCpu(out cpuSys, out cpuApp);
+            int gwCount, gwFails; double gwAvg; long gwP95, gwMax;
+            Diag.TakeRouter(out gwCount, out gwAvg, out gwP95, out gwMax, out gwFails);
+            Diag.TakeExtra(row);
+            WifiNative.TakeMinute(row);
+            long act = Interlocked.Exchange(ref activeUs, 0);
+            double ui = TakeUiHang != null ? TakeUiHang() : 0;
+            int incidents = Interlocked.Exchange(ref Flight.IncidentsThisMinute, 0);
+            if (lk2 == null || peer == null || !lk2.TakeMinute(row)) return;
+            long cr = Crossings;
+            row.ActiveS = act / 1e6; row.Crossings = (int)(cr - lastCrossings); lastCrossings = cr;
+            row.CpuSys = cpuSys; row.CpuApp = cpuApp;
+            row.RouterAvg = gwAvg; row.RouterP95 = gwP95; row.RouterMax = gwMax; row.RouterFails = gwFails;
+            var wf = Diag.Wifi;
+            if (wf.OnWifi) { row.Signal = wf.Signal; row.Band = wf.Band; row.Channel = wf.Channel; row.RxMbps = wf.RxMbps; row.SameCh = wf.SameChannel; row.Overlap = wf.Overlapping; row.NeighborMax = wf.NeighborMax; }
+            if (WifiNative.Available) row.LowLatency = WifiNative.LowLatency ? 1 : 0;
+            row.Stalls = Interlocked.Exchange(ref Diag.Stalls, 0); row.SlowHooks = Interlocked.Exchange(ref Diag.SlowHooks, 0); row.Blocked = Interlocked.Exchange(ref Diag.InjectBlocked, 0);
+            row.Incidents = incidents; row.UiHangMs = ui;
+            row.Classify();
+            string csv = row.ToCsv();
+            Metrics.Append(csv);
+            Func<double, string> v = d => d < 0 ? "–" : d.ToString("0.#");
+            Log.Info("RESUMEN {0}: ida y vuelta {1}/{2}/{3} ms (prom/p95/max), tramo red p95 {4} ms, tirones {5} (máx {6} ms), pérdida {7}%, router {8}/{9} ms, internet p95 {10} ms, tráfico {11}/{12} KB/s, usando {13} s, cruces {14}, {15}, cpu {16}% [{17}], causa={18}",
+                cfg.Name, v(row.RttAvg), v(row.RttP95), v(row.RttMax), v(row.OwdP95), row.Stutters, v(row.StutterMaxMs), v(row.LossPct), v(row.RouterAvg), v(row.RouterP95), v(row.InetP95),
+                v(row.NetRxKBs), v(row.NetTxKBs), v(row.ActiveS), row.Crossings, Diag.WifiShort(), v(row.CpuSys), row.TopCpu, row.Cause);
+            lk2.QueueReliable(Ev.LogLine, System.Text.Encoding.UTF8.GetBytes("CSV|" + csv));
         }
 
         public void Dispose()

@@ -88,28 +88,44 @@ namespace Cruce
             w.RxMbps = Dbl(g("Velocidad de recepci.{1,2}n \\(Mbps\\)|Receive rate \\(Mbps\\)"));
             w.TxMbps = Dbl(g("Velocidad de transmisi.{1,2}n \\(Mbps\\)|Transmit rate \\(Mbps\\)"));
             string myBssid = (g("BSSID|AP BSSID") ?? "").ToLowerInvariant();
+            if (WifiNative.Available && WifiNative.Connected)
+            {
+                // Driver values are fresher and more precise than netsh's text.
+                if (WifiNative.Quality >= 0) w.Signal = WifiNative.Quality;
+                if (WifiNative.Channel > 0) w.Channel = WifiNative.Channel;
+                if (WifiNative.RxKbps > 0) w.RxMbps = WifiNative.RxKbps / 1000.0;
+                if (WifiNative.TxKbps > 0) w.TxMbps = WifiNative.TxKbps / 1000.0;
+            }
 
             var old = wifi;
             w.SameChannel = old.SameChannel; w.Overlapping = old.Overlapping; w.NeighborMax = old.NeighborMax; w.NetworksSeen = old.NetworksSeen;
             if (scanNeighbours && w.Channel > 0)
             {
-                // Every access point the laptop can hear, with its channel and strength.
-                string n = Netsh("wlan show networks mode=bssid");
-                var aps = new List<int[]>(); // {signal, channel}
-                string bssid = null; int sig = -1, ch = -1;
-                Action flush = () => { if (bssid != null && bssid != myBssid && ch > 0) aps.Add(new[] { sig, ch }); bssid = null; sig = -1; ch = -1; };
-                foreach (var line in n.Split('\n'))
+                // Every access point the laptop can hear, with its channel and strength (%).
+                List<int[]> aps = null;
+                List<int[]> nat = null;
+                try { nat = WifiNative.Neighbours(); } catch { }
+                if (nat != null) aps = nat.Select(a => new[] { Math.Max(0, Math.Min(100, 2 * (a[0] + 100))), a[1] }).ToList();
+                else
                 {
-                    var mb = Regex.Match(line, @"^\s*BSSID\s*\d*\s*:\s*(\S+)", RegexOptions.IgnoreCase);
-                    if (mb.Success) { flush(); bssid = mb.Groups[1].Value.ToLowerInvariant(); continue; }
-                    if (Regex.IsMatch(line, @"^\s*SSID\s*\d+\s*:", RegexOptions.IgnoreCase)) { flush(); continue; }
-                    if (bssid == null) continue;
-                    var ms = Regex.Match(line, @"^\s*(Se.{1,2}al|Signal)\s*:\s*(\d+)", RegexOptions.IgnoreCase);
-                    if (ms.Success) sig = int.Parse(ms.Groups[2].Value);
-                    var mc = Regex.Match(line, @"^\s*(Canal|Channel)\s*:\s*(\d+)", RegexOptions.IgnoreCase);
-                    if (mc.Success) ch = int.Parse(mc.Groups[2].Value);
+                    string n = Netsh("wlan show networks mode=bssid");
+                    var list = new List<int[]>();
+                    string bssid = null; int sig = -1, ch = -1;
+                    Action flush = () => { if (bssid != null && bssid != myBssid && ch > 0) list.Add(new[] { sig, ch }); bssid = null; sig = -1; ch = -1; };
+                    foreach (var line in n.Split('\n'))
+                    {
+                        var mb = Regex.Match(line, @"^\s*BSSID\s*\d*\s*:\s*(\S+)", RegexOptions.IgnoreCase);
+                        if (mb.Success) { flush(); bssid = mb.Groups[1].Value.ToLowerInvariant(); continue; }
+                        if (Regex.IsMatch(line, @"^\s*SSID\s*\d+\s*:", RegexOptions.IgnoreCase)) { flush(); continue; }
+                        if (bssid == null) continue;
+                        var ms = Regex.Match(line, @"^\s*(Se.{1,2}al|Signal)\s*:\s*(\d+)", RegexOptions.IgnoreCase);
+                        if (ms.Success) sig = int.Parse(ms.Groups[2].Value);
+                        var mc = Regex.Match(line, @"^\s*(Canal|Channel)\s*:\s*(\d+)", RegexOptions.IgnoreCase);
+                        if (mc.Success) ch = int.Parse(mc.Groups[2].Value);
+                    }
+                    flush();
+                    aps = list;
                 }
-                flush();
                 bool is24 = w.Channel <= 14;
                 w.NetworksSeen = aps.Count;
                 w.SameChannel = aps.Count(a => a[1] == w.Channel);
@@ -155,9 +171,11 @@ namespace Cruce
                             var r = p.Send(gw, 1000);
                             lock (pingGate)
                             {
-                                if (r.Status == IPStatus.Success) pingMs.Add(r.RoundtripTime);
-                                else pingFails++;
+                                if (r.Status == IPStatus.Success) { pingMs.Add(r.RoundtripTime); LastRouterMs = (int)r.RoundtripTime; }
+                                else { pingFails++; LastRouterMs = -1; }
                             }
+                            Flight.Add(Flight.K_PING, r.Status == IPStatus.Success ? (int)r.RoundtripTime : 9999, -1);
+                            if (n % 2 == 0) { SampleNet(gw); PingInternet(p); }
                         }
                     }
                     catch { lock (pingGate) pingFails++; }
@@ -180,6 +198,170 @@ namespace Cruce
                 else { avg = -1; p95 = -1; max = -1; }
                 pingMs.Clear(); pingFails = 0;
             }
+        }
+
+        // ------------------------------------------------------------ timing histograms (hot path: one Interlocked op)
+
+        static readonly int[] hookHist = new int[201];   // 1 ms buckets
+        static readonly int[] injHist = new int[1001];   // 10 µs buckets
+
+        public static void HookDelay(int ms)
+        {
+            if (ms < 0 || ms > 100000) return;
+            Interlocked.Increment(ref hookHist[Math.Min(200, ms)]);
+        }
+
+        public static void InjectTime(long ticks)
+        {
+            int us = (int)(ticks * 1000000 / Stopwatch.Frequency);
+            Interlocked.Increment(ref injHist[Math.Min(1000, us / 10)]);
+            Flight.Add(Flight.K_INJ, us, 0);
+        }
+
+        static double TakePct(int[] h, double q, double unit)
+        {
+            long total = 0;
+            var copy = new int[h.Length];
+            for (int i = 0; i < h.Length; i++) { copy[i] = Interlocked.Exchange(ref h[i], 0); total += copy[i]; }
+            if (total == 0) return -1;
+            long target = (long)(total * q), acc = 0;
+            for (int i = 0; i < copy.Length; i++) { acc += copy[i]; if (acc > target) return i * unit; }
+            return (copy.Length - 1) * unit;
+        }
+
+        // ------------------------------------------------------------ network throughput + internet ping
+
+        static readonly object netGate = new object();
+        static long netRxBytes, netTxBytes, netPeak, lastRx = -1, lastTx = -1;
+        static DateTime netWindowStart = DateTime.UtcNow, lastNetSample = DateTime.UtcNow;
+        static readonly List<long> inetMs = new List<long>();
+        static int inetFails;
+        public static volatile int LastRouterMs = -1, LastInetMs = -1;
+
+        static NetworkInterface netIf;
+        static int netIfUses;
+
+        static void SampleNet(IPAddress gw)
+        {
+            try
+            {
+                if (netIf == null || netIfUses++ > 30)
+                {
+                    netIfUses = 0;
+                    netIf = NetworkInterface.GetAllNetworkInterfaces().FirstOrDefault(n => n.OperationalStatus == OperationalStatus.Up &&
+                        n.GetIPProperties().GatewayAddresses.Any(g => g.Address.Equals(gw)));
+                }
+                var ni = netIf;
+                if (ni == null) return;
+                var st = ni.GetIPv4Statistics();
+                long rx = st.BytesReceived, tx = st.BytesSent;
+                var now = DateTime.UtcNow;
+                lock (netGate)
+                {
+                    if (lastRx >= 0 && rx >= lastRx && tx >= lastTx)
+                    {
+                        long drx = rx - lastRx, dtx = tx - lastTx;
+                        netRxBytes += drx; netTxBytes += dtx;
+                        double secs = Math.Max(0.5, (now - lastNetSample).TotalSeconds);
+                        long kbs = (long)((drx + dtx) / 1024.0 / secs);
+                        if (kbs > netPeak) netPeak = kbs;
+                        Flight.Add(Flight.K_NET, (int)(drx / 1024 / secs), (int)(dtx / 1024 / secs));
+                    }
+                    lastRx = rx; lastTx = tx; lastNetSample = now;
+                }
+            }
+            catch { }
+        }
+
+        static void PingInternet(Ping p)
+        {
+            try
+            {
+                var r = p.Send(IPAddress.Parse("1.1.1.1"), 1000);
+                lock (netGate)
+                {
+                    if (r.Status == IPStatus.Success) { inetMs.Add(r.RoundtripTime); LastInetMs = (int)r.RoundtripTime; }
+                    else { inetFails++; LastInetMs = -1; }
+                }
+                Flight.Add(Flight.K_PING, 0, r.Status == IPStatus.Success ? (int)r.RoundtripTime : 9999);
+            }
+            catch { lock (netGate) inetFails++; }
+        }
+
+        // ------------------------------------------------------------ CPU frequency + top processes
+
+        [DllImport("powrprof.dll")]
+        static extern int CallNtPowerInformation(int level, IntPtr inBuf, int inLen, IntPtr outBuf, int outLen);
+
+        static double CpuMhzPct()
+        {
+            int n = Environment.ProcessorCount, sz = 24 * n;
+            IntPtr buf = Marshal.AllocHGlobal(sz);
+            try
+            {
+                if (CallNtPowerInformation(11, IntPtr.Zero, 0, buf, sz) != 0) return -1;
+                double sum = 0; int cnt = 0;
+                for (int i = 0; i < n; i++)
+                {
+                    int max = Marshal.ReadInt32(buf, i * 24 + 4), cur = Marshal.ReadInt32(buf, i * 24 + 8), limit = Marshal.ReadInt32(buf, i * 24 + 12);
+                    if (max <= 0) continue;
+                    sum += 100.0 * Math.Min(cur, limit > 0 ? limit : cur) / max; cnt++;
+                }
+                return cnt > 0 ? sum / cnt : -1;
+            }
+            finally { Marshal.FreeHGlobal(buf); }
+        }
+
+        static Dictionary<int, TimeSpan> lastProcTimes = new Dictionary<int, TimeSpan>();
+        static DateTime lastProcAt = DateTime.UtcNow;
+
+        static string TopCpu()
+        {
+            var now = DateTime.UtcNow;
+            double wall = Math.Max(1, (now - lastProcAt).TotalMilliseconds) * Environment.ProcessorCount;
+            var cur = new Dictionary<int, TimeSpan>();
+            var use = new List<Tuple<string, double>>();
+            foreach (var p in Process.GetProcesses())
+            {
+                try
+                {
+                    var t = p.TotalProcessorTime;
+                    cur[p.Id] = t;
+                    TimeSpan prev;
+                    if (lastProcTimes.TryGetValue(p.Id, out prev)) use.Add(Tuple.Create(p.ProcessName, 100.0 * (t - prev).TotalMilliseconds / wall));
+                }
+                catch { }
+                finally { p.Dispose(); }
+            }
+            lastProcTimes = cur; lastProcAt = now;
+            return string.Join(", ", use.Where(u => u.Item2 >= 1).OrderByDescending(u => u.Item2).Take(3).Select(u => string.Format(System.Globalization.CultureInfo.InvariantCulture, "{0} {1:0}%", u.Item1, u.Item2)));
+        }
+
+        /// <summary>Fills this PC's per-minute extras. Runs off the latency-critical threads.</summary>
+        public static void TakeExtra(MinuteRow r)
+        {
+            r.HookDelayP95 = TakePct(hookHist, 0.95, 1);
+            r.InjectP95Us = TakePct(injHist, 0.95, 10);
+            lock (netGate)
+            {
+                double secs = Math.Max(1, (DateTime.UtcNow - netWindowStart).TotalSeconds);
+                if (lastRx >= 0) { r.NetRxKBs = netRxBytes / 1024.0 / secs; r.NetTxKBs = netTxBytes / 1024.0 / secs; r.NetPeakKBs = netPeak; }
+                netRxBytes = netTxBytes = netPeak = 0; netWindowStart = DateTime.UtcNow;
+                if (inetMs.Count > 0) { var s = inetMs.OrderBy(v => v).ToList(); r.InetAvg = s.Average(); r.InetP95 = s[Math.Min(s.Count - 1, (int)(s.Count * 0.95))]; }
+                r.InetFails = inetFails; inetMs.Clear(); inetFails = 0;
+            }
+            try { r.CpuMhzPct = CpuMhzPct(); } catch { }
+            try { r.TopCpu = TopCpu(); } catch { }
+        }
+
+        /// <summary>One-line picture of the current state, for incident files.</summary>
+        public static string Snapshot()
+        {
+            var sb = new StringBuilder();
+            if (WifiNative.Available) sb.AppendFormat("wifi {0} dBm, calidad {1}%, canal {2}, rx {3} / tx {4} Mbps, baja latencia {5}; ", WifiNative.Rssi, WifiNative.Quality, WifiNative.Channel, WifiNative.RxKbps / 1000, WifiNative.TxKbps / 1000, WifiNative.LowLatency ? "sí" : "no");
+            else sb.Append(wifiText + "; ");
+            sb.AppendFormat("ping router {0} ms, internet {1} ms", LastRouterMs, LastInetMs);
+            return sb.ToString();
         }
 
         // ------------------------------------------------------------ CPU

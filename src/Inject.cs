@@ -24,6 +24,7 @@ namespace Cruce
                 if (now - lastBlockedLog > 5000000)
                 {
                     lastBlockedLog = now;
+                    Flight.Incident("bloqueo_windows", "Windows rechazó el mouse/teclado de la otra PC (error " + err + ")");
                     Log.Info("INYECCIÓN BLOQUEADA por Windows (error {0}): hay una ventana de administrador o de seguridad en primer plano y Cruce {1}.", err, Autostart.IsAdmin() ? "tiene admin (pantalla segura: UAC o bloqueo)" : "NO tiene admin");
                 }
             }
