@@ -29,7 +29,8 @@ namespace Cruce
         readonly PacketCrypto crypto;
         readonly TcpListener listener;
         readonly int port;
-        readonly Func<IPAddress> peerAddr;
+        readonly Func<IPEndPoint> peerAddr;
+        public readonly int ListenPort;
         readonly Func<Config> cfg;
         readonly Dispatcher ui;
         HwndSource wnd;
@@ -40,15 +41,23 @@ namespace Cruce
         public event Action<string> Notify;
         public volatile string Activity = "";
 
-        public ClipSync(Keys keys, int port, Func<IPAddress> peerAddr, Func<Config> cfg, Dispatcher ui)
+        public ClipSync(Keys keys, int port, Func<IPEndPoint> peerAddr, Func<Config> cfg, Dispatcher ui)
         {
             crypto = new PacketCrypto(keys);
             this.port = port;
             this.peerAddr = peerAddr;
             this.cfg = cfg;
             this.ui = ui;
-            listener = new TcpListener(IPAddress.Any, port);
-            listener.Start();
+            TcpListener lst = null;
+            for (int tp = port; tp < port + 20 && lst == null; tp++)
+            {
+                try { var t = new TcpListener(IPAddress.Any, tp); t.Start(); lst = t; }
+                catch (SocketException ex) { Log.Info("TCP {0} no disponible ({1}), pruebo otro", tp, ex.SocketErrorCode); }
+            }
+            if (lst == null) { lst = new TcpListener(IPAddress.Any, 0); lst.Start(); }
+            listener = lst;
+            ListenPort = ((IPEndPoint)lst.LocalEndpoint).Port;
+            Log.Info("portapapeles escuchando en TCP {0}", ListenPort);
             new Thread(AcceptLoop) { IsBackground = true, Name = "cruce-clip" }.Start();
 
             var p = new HwndSourceParameters("CruceClipboard");
@@ -123,7 +132,7 @@ namespace Cruce
             return dup;
         }
 
-        void StartSend(IPAddress addr, Action<Stream> body)
+        void StartSend(IPEndPoint addr, Action<Stream> body)
         {
             if (sending != null) sending.Cancel();
             var cts = new CancellationTokenSource();
@@ -135,7 +144,7 @@ namespace Cruce
                     using (var tcp = new TcpClient())
                     {
                         tcp.NoDelay = true;
-                        var ar = tcp.BeginConnect(addr, port, null, null);
+                        var ar = tcp.BeginConnect(addr.Address, addr.Port, null, null);
                         if (!ar.AsyncWaitHandle.WaitOne(3000)) return;
                         tcp.EndConnect(ar);
                         tcp.SendTimeout = 15000;

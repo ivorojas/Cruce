@@ -63,6 +63,7 @@ namespace Cruce
         public event Action<string> Notify;
         public Func<bool> IsElevated;
         public long Crossings;
+        public volatile int TcpPort;
 
         [StructLayout(LayoutKind.Sequential)] struct LASTINPUTINFO { public uint cbSize; public uint dwTime; }
         [DllImport("user32.dll")] static extern bool GetLastInputInfo(ref LASTINPUTINFO lii);
@@ -538,6 +539,7 @@ namespace Cruce
             h.PeerSide = cfg.Side;
             h.SideStamp = cfg.SideStamp;
             h.Elevated = IsElevated != null && IsElevated();
+            h.TcpPort = TcpPort;
             return h;
         }
 

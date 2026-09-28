@@ -19,6 +19,7 @@ namespace Cruce
         public Side SideOfMe;      // where *we* are, from the peer's point of view
         public long SideStamp;
         public bool Elevated;
+        public int TcpPort;
     }
 
     public sealed class HelloInfo
@@ -28,6 +29,7 @@ namespace Cruce
         public Side PeerSide;
         public long SideStamp;
         public bool Elevated;
+        public int TcpPort;
     }
 
     public interface ILinkHandler
@@ -61,6 +63,9 @@ namespace Cruce
     {
         const byte T_HELLO = 1, T_DATA = 2, T_BYE = 3, PROTO = 1;
         const int RelBudget = 1100;
+        public const int PortSpan = 20; /* if the base port is taken (in use or reserved by Windows), the next free one is used */
+        public int BoundPort;
+        public static bool Trace;
 
         sealed class Rel { public uint Seq; public byte Type; public byte[] Data; }
 
@@ -133,7 +138,14 @@ namespace Cruce
             sock.ReceiveBufferSize = 1 << 20;
             sock.SendBufferSize = 1 << 20;
             try { sock.IOControl(unchecked((int)0x9800000C), new byte[4], null); } catch { } // ignore ICMP "port unreachable" resets
-            sock.Bind(new IPEndPoint(IPAddress.Any, port));
+            SocketException last = null;
+            for (int p = port; p < port + PortSpan; p++)
+            {
+                try { sock.Bind(new IPEndPoint(IPAddress.Any, p)); BoundPort = p; last = null; break; }
+                catch (SocketException ex) { last = ex; Log.Info("UDP {0} no disponible ({1}), pruebo otro", p, ex.SocketErrorCode); }
+            }
+            if (last != null) throw last;
+            Log.Info("enlace escuchando en UDP {0}", BoundPort);
         }
 
         public void Start()
@@ -262,7 +274,9 @@ namespace Cruce
             var mons = hi.Mons ?? new Mon[0];
             w.U8(mons.Length);
             foreach (var m in mons) { w.I32(m.L); w.I32(m.T); w.I32(m.R); w.I32(m.B); w.U16(m.Dpi); }
+            w.U16(hi.TcpPort);
             lock (gate) lastHelloSend = NowUs();
+            if (Trace) Log.Info("[{0}] hello{1} -> {2} destinos (1ro {3})", BoundPort, reply ? "(reply)" : "", eps.Length, eps.Length > 0 ? eps[0].ToString() : "-");
             SendRaw(w.B, w.P, eps);
         }
 
@@ -292,8 +306,12 @@ namespace Cruce
                 bcastCache = list.Distinct().ToArray();
                 bcastAt = now;
             }
-            var eps = bcastCache.Select(a => new IPEndPoint(a, peerPort)).ToList();
-            if (fixedPeer != null) eps.Insert(0, new IPEndPoint(fixedPeer, peerPort));
+            var eps = new List<IPEndPoint>();
+            for (int p = peerPort; p < peerPort + PortSpan; p++)
+            {
+                foreach (var a in bcastCache) eps.Add(new IPEndPoint(a, p));
+                if (fixedPeer != null) eps.Add(new IPEndPoint(fixedPeer, p));
+            }
             if (lastKnownEp != null) eps.Insert(0, lastKnownEp);
             return eps.ToArray();
         }
@@ -353,6 +371,7 @@ namespace Cruce
             var r = new RBuf(p, 1, p.Length - 1);
             uint s = r.U32();
             if (s == Session) return; // our own broadcast looping back
+            if (Trace) Log.Info("[{0}] hello recibido de {1} ses {2:X}", BoundPort, ep, s);
             int proto = r.U8();
             bool reply = r.U8() == 1;
             string name = r.Str();
@@ -362,6 +381,7 @@ namespace Cruce
             int mc = r.U8();
             var mons = new Mon[mc];
             for (int i = 0; i < mc; i++) { mons[i].L = r.I32(); mons[i].T = r.I32(); mons[i].R = r.I32(); mons[i].B = r.I32(); mons[i].Dpi = r.U16(); }
+            int tcpPort = r.Left >= 2 ? r.U16() : 0;
             if (proto != PROTO) return;
 
             bool isNew = false, changed = false;
@@ -381,7 +401,7 @@ namespace Cruce
                     changed = peer.Name != name || !Geo.Same(peer.Mons, mons) || peer.SideStamp != stamp || peer.SideOfMe != side || peer.Elevated != elev;
                 }
                 CountRx(sid, ctr);
-                peer.Name = name; peer.Mons = mons; peer.SideOfMe = side; peer.SideStamp = stamp; peer.Elevated = elev;
+                peer.TcpPort = tcpPort; peer.Name = name; peer.Mons = mons; peer.SideOfMe = side; peer.SideStamp = stamp; peer.Elevated = elev;
                 if (peer.Ep == null || !peer.Ep.Equals(ep)) { peer.Ep = ep; }
                 lastKnownEp = ep;
                 Interlocked.Exchange(ref lastHeard, NowUs());

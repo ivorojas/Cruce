@@ -77,7 +77,7 @@ namespace Cruce
 
     public sealed class AppController
     {
-        public const string Version = "1.5";
+        public const string Version = "1.6";
 
         readonly Application app;
         public readonly Config Cfg;
@@ -159,14 +159,16 @@ namespace Cruce
                 clip = new ClipSync(keys, Cfg.Port, () =>
                 {
                     var p = Engine.Peer;
-                    return p != null && p.Ep != null ? p.Ep.Address : null;
+                    return p != null && p.Ep != null ? new IPEndPoint(p.Ep.Address, p.TcpPort > 0 ? p.TcpPort : Cfg.Port) : null;
                 }, () => Cfg, app.Dispatcher);
                 clip.Notify += Notify;
+                Engine.TcpPort = clip.ListenPort;
+                l.AnnounceNow();
                 Log.Info("enlace iniciado: puerto {0}, ip fija {1}", Cfg.Port, fixedIp != null ? fixedIp.ToString() : "no (descubrimiento automático)");
             }
             catch (SocketException ex)
             {
-                LinkError = "El puerto " + Cfg.Port + " está ocupado";
+                LinkError = "Ningún puerto de red disponible (" + ex.SocketErrorCode + ")";
                 Log.Error(ex, "link start");
             }
             catch (Exception ex)
