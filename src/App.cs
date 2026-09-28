@@ -70,13 +70,14 @@ namespace Cruce
             ctl.Start(!args.Contains("--tray"));
             app.Run();
             GC.KeepAlive(mutex);
+            Environment.Exit(0);
             return 0;
         }
     }
 
     public sealed class AppController
     {
-        public const string Version = "1.3";
+        public const string Version = "1.4";
 
         readonly Application app;
         public readonly Config Cfg;
@@ -145,7 +146,12 @@ namespace Cruce
                 {
                     try { fixedIp = Dns.GetHostAddresses(Cfg.PeerIp.Trim()).FirstOrDefault(a => a.AddressFamily == AddressFamily.InterNetwork); } catch { }
                 }
-                var l = new Link(keys, Cfg.Port, Cfg.PeerPort > 0 ? Cfg.PeerPort : Cfg.Port, fixedIp, Engine);
+                Link l = null;
+                for (int attempt = 0; l == null; attempt++)
+                {
+                    try { l = new Link(keys, Cfg.Port, Cfg.PeerPort > 0 ? Cfg.PeerPort : Cfg.Port, fixedIp, Engine); }
+                    catch (SocketException) { if (attempt >= 20) throw; Log.Info("puerto {0} ocupado, reintento {1}", Cfg.Port, attempt + 1); Thread.Sleep(500); }
+                }
                 l.MinMoveIntervalUs = Cfg.MoveIntervalUs;
                 Engine.AttachLink(l);
                 l.Start();
@@ -219,6 +225,7 @@ namespace Cruce
             win.ReallyClose = true;
             win.Close();
             app.Shutdown();
+            new Thread(() => { Thread.Sleep(1500); Log.Info("forzando cierre del proceso"); Thread.Sleep(200); Environment.Exit(0); }) { IsBackground = true }.Start();
         }
     }
 
