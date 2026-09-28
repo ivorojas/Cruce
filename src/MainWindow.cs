@@ -218,6 +218,8 @@ namespace Cruce
             filesSw.Click += (s, e) => { app.Cfg.Files = filesSw.IsChecked == true; app.Cfg.Save(); };
             autoSw.Click += (s, e) => ToggleAutostart();
             adminBtn.Click += (s, e) => app.RestartElevated();
+            F<Button>("UpdBtn").Click += (s, e) => app.CheckUpdates(true);
+            F<Button>("LogBtn").Click += (s, e) => { try { System.Diagnostics.Process.Start("notepad.exe", "\"" + Log.PathName + "\""); } catch { } };
             for (int i = 0; i < 4; i++)
             {
                 var side = (Side)i;
@@ -354,7 +356,7 @@ namespace Cruce
                 ? "Elegí una clave y poné la misma en las dos PCs."
                 : "Poné la misma clave en las dos PCs. Todo viaja cifrado con ella.";
 
-            footer.Text = "Esta PC: " + app.Cfg.Name + "  ·  " + LocalIp() + "  ·  v" + AppController.Version;
+            footer.Text = !string.IsNullOrEmpty(Updater.Status) ? Updater.Status : "Esta PC: " + app.Cfg.Name + "  ·  " + LocalIp() + "  ·  v" + AppController.Version;
 
             if (IsVisible)
             {

@@ -546,8 +546,10 @@ namespace Cruce
                         if (wantHi) Native.timeBeginPeriod(1); else Native.timeEndPeriod(1);
                         hiRes = wantHi;
                     }
+                    long before = NowUs();
                     Thread.Sleep(hiRes ? 1 : 15);
                     long now = NowUs();
+                    if (now - before > 100000 && peer != null) Log.Info("FRENADO: el sistema pausó a Cruce {0:0} ms (CPU saturada, suspensión o ahorro de energía)", (now - before) / 1000.0);
                     bool bcast = false, helloPeer = false, down = false;
                     IPEndPoint peerEp = null;
                     lock (gate)

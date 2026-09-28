@@ -132,13 +132,15 @@ namespace Cruce
                         using (var s = tcp.GetStream())
                         {
                             cancel = cts.Token;
+                            var sw = System.Diagnostics.Stopwatch.StartNew();
                             body(s);
                             s.Flush();
+                            Log.Info("portapapeles enviado en {0} ms", sw.ElapsedMilliseconds);
                         }
                     }
                 }
                 catch (OperationCanceledException) { }
-                catch (Exception ex) { Log.Info("clipboard send failed: {0}", ex.Message); }
+                catch (Exception ex) { Log.Info("PORTAPAPELES: fallo al enviar: {0}", ex.Message); }
                 finally { Activity = ""; }
             });
         }
@@ -249,6 +251,7 @@ namespace Cruce
                     var s = c.GetStream();
                     var first = ReadFrame(s);
                     if (first == null || first.Length == 0) return;
+                    Log.Info("portapapeles recibido: tipo {0}, {1} bytes", first[0] == K_TEXT ? "texto" : first[0] == K_IMAGE ? "imagen" : "archivos", first.Length - 1);
                     switch (first[0])
                     {
                         case K_TEXT:
@@ -358,7 +361,7 @@ namespace Cruce
                 }
                 catch (Exception) { Thread.Sleep(40); }
             }
-            Log.Info("could not set clipboard (busy)");
+            Log.Info("PORTAPAPELES: no se pudo escribir (otra app lo tenía ocupado)");
         }
 
         static void CleanupOld()

@@ -51,7 +51,9 @@ namespace Cruce
         double takeoverAccum;
         long takeoverAt;
 
-        long lastMonCheck, lastSummary, lastCrossings, takeovers;
+        long lastMonCheck, lastSummary, lastCrossings, takeovers, enteredAt, lastHookCheck, lastSlowLog;
+        volatile int lastHookTick = Environment.TickCount;
+        const uint WM_REHOOK = 0x8001;
         Thread hookThread;
         uint hookThreadId;
         IntPtr mouseHook, kbHook;
@@ -61,6 +63,9 @@ namespace Cruce
         public event Action<string> Notify;
         public Func<bool> IsElevated;
         public long Crossings;
+
+        [StructLayout(LayoutKind.Sequential)] struct LASTINPUTINFO { public uint cbSize; public uint dwTime; }
+        [DllImport("user32.dll")] static extern bool GetLastInputInfo(ref LASTINPUTINFO lii);
 
         public Engine(Config cfg)
         {
@@ -107,6 +112,15 @@ namespace Cruce
                 MSG msg;
                 while (Native.GetMessage(out msg, IntPtr.Zero, 0, 0) > 0)
                 {
+                    if (msg.message == WM_REHOOK)
+                    {
+                        Native.UnhookWindowsHookEx(mouseHook); Native.UnhookWindowsHookEx(kbHook);
+                        mouseHook = Native.SetWindowsHookEx(Native.WH_MOUSE_LL, mouseProc, mod, 0);
+                        kbHook = Native.SetWindowsHookEx(Native.WH_KEYBOARD_LL, kbProc, mod, 0);
+                        lastHookTick = Environment.TickCount;
+                        Log.Info("hooks reinstalados (ok={0})", HooksOk);
+                        continue;
+                    }
                     Native.TranslateMessage(ref msg);
                     Native.DispatchMessage(ref msg);
                 }
@@ -123,6 +137,20 @@ namespace Cruce
 
         IntPtr MouseProc(int nCode, IntPtr w, IntPtr l)
         {
+            lastHookTick = Environment.TickCount;
+            long t0 = System.Diagnostics.Stopwatch.GetTimestamp();
+            try { return MouseProcInner(nCode, w, l); }
+            finally { SlowCheck(t0, "mouse"); }
+        }
+
+        void SlowCheck(long t0, string what)
+        {
+            double ms = (System.Diagnostics.Stopwatch.GetTimestamp() - t0) * 1000.0 / System.Diagnostics.Stopwatch.Frequency;
+            if (ms > 10 && Link.NowUs() - lastSlowLog > 2000000) { lastSlowLog = Link.NowUs(); Log.Info("LENTO: el hook de {0} tardó {1:0.0} ms", what, ms); }
+        }
+
+        IntPtr MouseProcInner(int nCode, IntPtr w, IntPtr l)
+        {
             if (nCode >= 0)
             {
                 var m = (MSLLHOOKSTRUCT*)l;
@@ -138,6 +166,14 @@ namespace Cruce
         }
 
         IntPtr KbProc(int nCode, IntPtr w, IntPtr l)
+        {
+            lastHookTick = Environment.TickCount;
+            long t0 = System.Diagnostics.Stopwatch.GetTimestamp();
+            try { return KbProcInner(nCode, w, l); }
+            finally { SlowCheck(t0, "teclado"); }
+        }
+
+        IntPtr KbProcInner(int nCode, IntPtr w, IntPtr l)
         {
             if (nCode >= 0)
             {
@@ -332,6 +368,9 @@ namespace Cruce
             l.QueueReliable(Ev.Enter, w.ToArray());
             l.SetMove((int)Math.Floor(rx), (int)Math.Floor(ry));
             Crossings++;
+            enteredAt = Link.NowUs();
+            var pp = peer;
+            Log.Info("CRUCE a {0} en {1:0},{2:0} (salida {3},{4})", pp != null ? pp.Name : "?", rx, ry, park.X, park.Y);
         }
 
         void RemoteMoveLocked(int x, int y)
@@ -364,7 +403,7 @@ namespace Cruce
                     double lx, ly;
                     Geo.Compose(s, le.InsideAt(over - 1), la, out lx, out ly);
                     Geo.Clamp(localMons, ref lx, ref ly);
-                    ReturnLocalLocked(new POINT((int)lx, (int)ly), true);
+                    ReturnLocalLocked(new POINT((int)lx, (int)ly), true, "borde");
                     return;
                 }
             }
@@ -373,7 +412,7 @@ namespace Cruce
             l.SetMove((int)Math.Floor(rx), (int)Math.Floor(ry));
         }
 
-        void ReturnLocalLocked(POINT pt, bool sendLeave)
+        void ReturnLocalLocked(POINT pt, bool sendLeave, string reason)
         {
             var l = link;
             if (l != null)
@@ -389,13 +428,14 @@ namespace Cruce
             }
             remoteButtons = 0;
             mode = Mode.Local;
+            Log.Info("VUELTA a esta PC en {0},{1} ({2}); estuvo {3:0.0} s en la otra", pt.X, pt.Y, reason, (Link.NowUs() - enteredAt) / 1e6);
             Native.SetCursorPos(pt.X, pt.Y);
             CursorHider.Show();
         }
 
         void HotkeyLocked()
         {
-            if (mode == Mode.Remote) { ReturnLocalLocked(park, true); return; }
+            if (mode == Mode.Remote) { ReturnLocalLocked(park, true, "atajo Ctrl+Alt+F12"); return; }
             var p = peer;
             if (mode != Mode.Local || p == null || link == null || Paused || p.Mons.Length == 0) return;
             POINT c;
@@ -422,6 +462,7 @@ namespace Cruce
             var l = link;
             if (l != null) { l.Active = false; l.QueueReliable(Ev.Takeover, null); }
             Interlocked.Increment(ref takeovers);
+            Log.Info("RECUPERASTE el control de esta PC (input físico mientras la controlaban)");
         }
 
         /// <summary>Leaves any cross-PC state without talking to the other side (link lost or replaced).</summary>
@@ -556,7 +597,7 @@ namespace Cruce
                         int x = r.I32(), y = r.I32();
                         lock (gate)
                         {
-                            if (mode == Mode.Remote) ReturnLocalLocked(park, false); // both crossed at once: yield
+                            if (mode == Mode.Remote) ReturnLocalLocked(park, false, "conflicto: las dos cruzaron a la vez");
                             mode = Mode.Controlled;
                             takeoverAccum = 0;
                             var l = link;
@@ -621,7 +662,7 @@ namespace Cruce
                         break;
                     }
                 case Ev.Takeover:
-                    lock (gate) { if (mode == Mode.Remote) ReturnLocalLocked(park, false); }
+                    lock (gate) { if (mode == Mode.Remote) ReturnLocalLocked(park, false, "la otra PC tomó el control (la tocaron)"); }
                     break;
             }
         }
@@ -650,6 +691,17 @@ namespace Cruce
                     if (lk != null) lk.AnnounceNow();
                 }
             }
+            if (now - lastHookCheck > 3000000)
+            {
+                lastHookCheck = now;
+                var lii = new LASTINPUTINFO { cbSize = 8 };
+                if (GetLastInputInfo(ref lii) && (int)(lii.dwTime - (uint)lastHookTick) > 1500 && hookThreadId != 0)
+                {
+                    Log.Info("HOOK MUERTO: hubo input que la captura no vio ({0} ms). Reenganchando.", (int)(lii.dwTime - (uint)lastHookTick));
+                    lastHookTick = Environment.TickCount;
+                    Native.PostThreadMessage(hookThreadId, WM_REHOOK, IntPtr.Zero, IntPtr.Zero);
+                }
+            }
             if (lastSummary == 0) lastSummary = now;
             if (now - lastSummary > 60000000)
             {
@@ -661,6 +713,7 @@ namespace Cruce
                     long cr = Crossings;
                     sum += string.Format(", cruces {0}, recuperaciones {1}, modo {2}", cr - lastCrossings, Interlocked.Exchange(ref takeovers, 0), mode);
                     lastCrossings = cr;
+                    sum += ", " + Diag.WifiShort();
                     Log.Info("RESUMEN {0}: {1}", cfg.Name, sum);
                     lk2.QueueReliable(Ev.LogLine, System.Text.Encoding.UTF8.GetBytes(sum));
                 }
@@ -670,7 +723,7 @@ namespace Cruce
             if (l == null || l.SinceHeardUs(now) <= SilentReturnUs) return;
             lock (gate)
             {
-                if (mode == Mode.Remote) { ReturnLocalLocked(park, false); Log.Info("peer silent: pointer back home"); }
+                if (mode == Mode.Remote) ReturnLocalLocked(park, false, "la otra PC no responde hace 1.2 s");
                 else if (mode == Mode.Controlled) { ReleaseInjectedLocked(); mode = Mode.Local; l.Active = false; }
             }
         }

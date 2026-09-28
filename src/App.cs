@@ -76,7 +76,7 @@ namespace Cruce
 
     public sealed class AppController
     {
-        public const string Version = "1.0";
+        public const string Version = "1.2";
 
         readonly Application app;
         public readonly Config Cfg;
@@ -107,9 +107,14 @@ namespace Cruce
             Engine.Notify += Notify;
             Engine.Start();
             if (!Engine.HooksOk) LinkError = "No se pudo capturar el mouse/teclado";
+            Diag.Start();
+            Diag.LogStartup(Cfg, IsElevated);
             RestartLink();
 
             tray = new Tray(this);
+            var upd = new DispatcherTimer { Interval = TimeSpan.FromSeconds(20) };
+            upd.Tick += (s, e) => { upd.Interval = TimeSpan.FromHours(3); CheckUpdates(true); };
+            upd.Start();
             win = new MainWindow(this);
             if (show || string.IsNullOrEmpty(Cfg.Secret)) ShowWindow();
 
@@ -151,6 +156,7 @@ namespace Cruce
                     return p != null && p.Ep != null ? p.Ep.Address : null;
                 }, () => Cfg, app.Dispatcher);
                 clip.Notify += Notify;
+                Log.Info("enlace iniciado: puerto {0}, ip fija {1}", Cfg.Port, fixedIp != null ? fixedIp.ToString() : "no (descubrimiento automático)");
             }
             catch (SocketException ex)
             {
@@ -181,6 +187,11 @@ namespace Cruce
             if (win.WindowState == WindowState.Minimized) win.WindowState = WindowState.Normal;
             win.Activate();
             win.Topmost = true; win.Topmost = false;
+        }
+
+        public void CheckUpdates(bool install)
+        {
+            Updater.CheckAsync(install, () => Engine.Mode == Mode.Local, () => app.Dispatcher.BeginInvoke(new Action(Exit)));
         }
 
         public void RestartElevated()
