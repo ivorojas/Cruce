@@ -54,10 +54,42 @@ namespace Cruce
             try { Geometry(); } catch (Exception ex) { Check(false, "geometría: " + ex.Message); }
             try { LinkTest(0.25, 47901, 47902); } catch (Exception ex) { Check(false, "enlace: " + ex); }
             try { LinkTest(0.0, 47903, 47904); } catch (Exception ex) { Check(false, "enlace: " + ex); }
+            try { PresenceTest(); } catch (Exception ex) { Check(false, "presencia: " + ex.Message); }
             if (inject) { try { InjectTest(); } catch (Exception ex) { Check(false, "inyección: " + ex.Message); } }
             sb.AppendLine(ok ? "RESULTADO: TODO OK" : "RESULTADO: HAY FALLAS");
             Console.Write(sb.ToString());
             return ok ? 0 : 1;
+        }
+
+        static void PresenceTest()
+        {
+            sb.AppendLine("[Presencia en el registro (clave de prueba, no toca la real)]");
+            string real = Presence.KeyPath;
+            Presence.KeyPath = @"Software\Cruce\PresenceSelfTest";
+            try
+            {
+                long before = (long)(DateTime.UtcNow - new DateTime(1970, 1, 1, 0, 0, 0, DateTimeKind.Utc)).TotalMilliseconds;
+                Presence.Set(Mode.Remote, "NOTEBOOK");
+                Presence.Flush();
+                using (var k = Microsoft.Win32.Registry.CurrentUser.OpenSubKey(Presence.KeyPath))
+                {
+                    Check(k != null, "la clave existe");
+                    Check((string)k.GetValue("Mode") == "Remote", "Mode = Remote");
+                    Check((string)k.GetValue("Peer") == "NOTEBOOK", "Peer = NOTEBOOK");
+                    Check(k.GetValueKind("Since") == Microsoft.Win32.RegistryValueKind.QWord && Math.Abs((long)k.GetValue("Since") - before) < 5000, "Since = ahora (Unix ms, QWORD)");
+                    Check(k.GetValueKind("Pid") == Microsoft.Win32.RegistryValueKind.DWord && (int)k.GetValue("Pid") == System.Diagnostics.Process.GetCurrentProcess().Id, "Pid = este proceso (DWORD)");
+                    Check((int)k.GetValue("Version") == 1, "Version = 1");
+                }
+                Presence.Set(Mode.Local, "");
+                Presence.Flush();
+                using (var k = Microsoft.Win32.Registry.CurrentUser.OpenSubKey(Presence.KeyPath))
+                    Check((string)k.GetValue("Mode") == "Local" && (string)k.GetValue("Peer") == "", "vuelve a Local con Peer vacío");
+            }
+            finally
+            {
+                try { Microsoft.Win32.Registry.CurrentUser.DeleteSubKeyTree(Presence.KeyPath, false); } catch { }
+                Presence.KeyPath = real;
+            }
         }
 
         static void Geometry()

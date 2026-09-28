@@ -79,7 +79,7 @@ namespace Cruce
 
     public sealed class AppController
     {
-        public const string Version = "1.10";
+        public const string Version = "1.11";
 
         readonly Application app;
         public readonly Config Cfg;
@@ -112,6 +112,7 @@ namespace Cruce
             Engine.IsElevated = () => IsElevated;
             Engine.Notify += Notify;
             Engine.Start();
+            Presence.Start(() => Engine.Mode, () => { var p = Engine.Peer; return p != null ? p.Name : ""; });
             if (!Engine.HooksOk) LinkError = "No se pudo capturar el mouse/teclado";
             Diag.Start();
             Diag.LogStartup(Cfg, IsElevated);
@@ -265,6 +266,7 @@ namespace Cruce
             if (link != null) link.Dispose();
             if (clip != null) clip.Dispose();
             Engine.Dispose();
+            Presence.Stop();
             WifiNative.Stop();
             CursorHider.Restore();
             win.ReallyClose = true;
