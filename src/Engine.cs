@@ -286,8 +286,7 @@ namespace Cruce
                         return true;
 
                     default:
-                        localKeys[vk] = !up;
-                        TakeoverLocked();
+                        localKeys[vk] = !up; /* this PC's own keyboard just works; it does not end the session */
                         return false;
                 }
             }

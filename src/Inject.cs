@@ -12,6 +12,21 @@ namespace Cruce
         static readonly uint[] Down = { 0x2, 0x8, 0x20, 0x80, 0x80 };
         static readonly uint[] Up = { 0x4, 0x10, 0x40, 0x100, 0x100 };
         static readonly int Size = Marshal.SizeOf(typeof(INPUT));
+        static long lastBlockedLog;
+
+        static void Send(INPUT[] i)
+        {
+            if (Native.SendInput((uint)i.Length, i, Size) == 0)
+            {
+                int err = Marshal.GetLastWin32Error();
+                long now = Link.NowUs();
+                if (now - lastBlockedLog > 5000000)
+                {
+                    lastBlockedLog = now;
+                    Log.Info("INYECCIÓN BLOQUEADA por Windows (error {0}): hay una ventana de administrador o de seguridad en primer plano y Cruce {1}.", err, Autostart.IsAdmin() ? "tiene admin (pantalla segura: UAC o bloqueo)" : "NO tiene admin");
+                }
+            }
+        }
 
         /// <summary>Pixel -> 0..65535 virtual-desktop coordinate that Windows maps back to exactly that pixel.</summary>
         public static void Norm(int x, int y, out int nx, out int ny)
@@ -33,7 +48,7 @@ namespace Cruce
             i[0].u.mi.dwFlags = flags;
             i[0].u.mi.mouseData = data;
             i[0].u.mi.dwExtraInfo = Engine.Tag;
-            Native.SendInput(1, i, Size);
+            Send(i);
         }
 
         public static void Move(int x, int y) { Mouse(x, y, MOVE | ABS | VDESK | NOCOALESCE, 0); }
@@ -52,7 +67,7 @@ namespace Cruce
             i[0].u.mi.dwFlags = horizontal ? HWHEEL : WHEEL;
             i[0].u.mi.mouseData = unchecked((uint)delta);
             i[0].u.mi.dwExtraInfo = Engine.Tag;
-            Native.SendInput(1, i, Size);
+            Send(i);
         }
 
         /// <summary>
@@ -69,7 +84,7 @@ namespace Cruce
             i[0].u.ki.wScan = (ushort)(scan & 0xFF);
             i[0].u.ki.dwFlags = (byVk ? 0 : K_SCAN) | (ext ? K_EXT : 0) | (up ? K_UP : 0);
             i[0].u.ki.dwExtraInfo = Engine.Tag;
-            Native.SendInput(1, i, Size);
+            Send(i);
         }
     }
 
