@@ -10,7 +10,7 @@ namespace Cruce
     /// <summary>Reliable event types.</summary>
     public static class Ev
     {
-        public const byte Enter = 1, Leave = 2, Button = 3, Wheel = 4, Key = 5, Takeover = 6;
+        public const byte Enter = 1, Leave = 2, Button = 3, Wheel = 4, Key = 5, Takeover = 6, LogLine = 7;
     }
 
     /// <summary>
@@ -51,7 +51,7 @@ namespace Cruce
         double takeoverAccum;
         long takeoverAt;
 
-        long lastMonCheck;
+        long lastMonCheck, lastSummary, lastCrossings, takeovers;
         Thread hookThread;
         uint hookThreadId;
         IntPtr mouseHook, kbHook;
@@ -421,6 +421,7 @@ namespace Cruce
             ReleaseInjectedLocked();
             var l = link;
             if (l != null) { l.Active = false; l.QueueReliable(Ev.Takeover, null); }
+            Interlocked.Increment(ref takeovers);
         }
 
         /// <summary>Leaves any cross-PC state without talking to the other side (link lost or replaced).</summary>
@@ -613,6 +614,12 @@ namespace Cruce
                         Inject.Key(vk, scan, ext, up);
                         break;
                     }
+                case Ev.LogLine:
+                    {
+                        var pp = peer;
+                        Log.Info("RESUMEN {0}: {1}", pp != null ? pp.Name : "otra PC", System.Text.Encoding.UTF8.GetString(d));
+                        break;
+                    }
                 case Ev.Takeover:
                     lock (gate) { if (mode == Mode.Remote) ReturnLocalLocked(park, false); }
                     break;
@@ -641,6 +648,21 @@ namespace Cruce
                     lock (gate) { localMons = m; edgesValid = false; }
                     var lk = link;
                     if (lk != null) lk.AnnounceNow();
+                }
+            }
+            if (lastSummary == 0) lastSummary = now;
+            if (now - lastSummary > 60000000)
+            {
+                lastSummary = now;
+                var lk2 = link;
+                string sum = lk2 != null && peer != null ? lk2.TakeSummary() : null;
+                if (sum != null)
+                {
+                    long cr = Crossings;
+                    sum += string.Format(", cruces {0}, recuperaciones {1}, modo {2}", cr - lastCrossings, Interlocked.Exchange(ref takeovers, 0), mode);
+                    lastCrossings = cr;
+                    Log.Info("RESUMEN {0}: {1}", cfg.Name, sum);
+                    lk2.QueueReliable(Ev.LogLine, System.Text.Encoding.UTF8.GetBytes(sum));
                 }
             }
             if (mode == Mode.Local) return;

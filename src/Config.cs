@@ -132,11 +132,31 @@ namespace Cruce
 
         public static void Error(Exception ex, string ctx) { Info("ERROR [{0}] {1}", ctx, ex); }
 
+        static StreamWriter Open(string p)
+        {
+            var fs = new FileStream(p, FileMode.Append, FileAccess.Write, FileShare.ReadWrite | FileShare.Delete);
+            return new StreamWriter(fs, new UTF8Encoding(false)) { AutoFlush = true };
+        }
+
         static void Pump()
         {
+            StreamWriter w = null;
             foreach (var s in q.GetConsumingEnumerable())
             {
-                try { if (path != null) File.AppendAllText(path, s + Environment.NewLine); } catch { }
+                for (int attempt = 0; attempt < 2; attempt++)
+                {
+                    try
+                    {
+                        if (w == null)
+                        {
+                            try { w = Open(path); }
+                            catch { path = Path.Combine(Path.GetTempPath(), "cruce.log"); w = Open(path); } // fallback location
+                        }
+                        w.WriteLine(s);
+                        break;
+                    }
+                    catch { try { if (w != null) w.Dispose(); } catch { } w = null; }
+                }
             }
         }
     }

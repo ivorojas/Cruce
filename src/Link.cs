@@ -334,8 +334,8 @@ namespace Cruce
             Interlocked.Increment(ref winIn);
             if (sid != peerSid) { peerSid = sid; lastCtr = ctr; winRecv++; return; }
             if (ctr <= lastCtr) return; // duplicate (same broadcast via several routes)
-            if (ctr - lastCtr > 1 && ctr - lastCtr < 10000) winLost += ctr - lastCtr - 1;
-            winRecv++;
+            if (ctr - lastCtr > 1 && ctr - lastCtr < 10000) { winLost += ctr - lastCtr - 1; minLost += ctr - lastCtr - 1; }
+            winRecv++; minRecv++; minPkts++;
             lastCtr = ctr;
         }
 
@@ -484,8 +484,40 @@ namespace Cruce
             if (sendAck) SendData();
         }
 
+        // per-minute aggregates for the diagnostic log
+        readonly int[] minHist = new int[1001]; // 1 ms buckets, last = 1 s+
+        long minCount, minSumUs, minMaxUs, minLost, minRecv, minPkts, minSpikes, lastSpikeLog;
+
+        /// <summary>Returns a one-line summary of the last period and resets it (null if no samples).</summary>
+        public string TakeSummary()
+        {
+            lock (gate)
+            {
+                string s = null;
+                if (minCount > 0)
+                {
+                    long target = (long)(minCount * 0.95), acc = 0; int p95 = 0;
+                    for (int i = 0; i < minHist.Length; i++) { acc += minHist[i]; if (acc > target) { p95 = i; break; } }
+                    long tot = minLost + minRecv;
+                    s = string.Format(System.Globalization.CultureInfo.InvariantCulture,
+                        "rtt avg {0:0.0} ms, p95 {1} ms, max {2:0.0} ms, picos>30ms {3}, perdida {4:0.00}% ({5}/{6}), paquetes {7}, qos {8}",
+                        minSumUs / 1000.0 / minCount, p95, minMaxUs / 1000.0, minSpikes, tot > 0 ? 100.0 * minLost / tot : 0, minLost, tot, minPkts, qosOn ? "si" : "no");
+                }
+                Array.Clear(minHist, 0, minHist.Length);
+                minCount = minSumUs = minMaxUs = minLost = minRecv = minPkts = minSpikes = 0;
+                return s;
+            }
+        }
+
         void AddRttLocked(uint us, long now)
         {
+            minHist[Math.Min(1000, (int)(us / 1000))]++;
+            minCount++; minSumUs += us; if (us > minMaxUs) minMaxUs = us;
+            if (us > 30000)
+            {
+                minSpikes++;
+                if (now - lastSpikeLog > 2000000) { lastSpikeLog = now; Log.Info("PICO de latencia: {0:0} ms (activo={1})", us / 1000.0, Active); }
+            }
             rttRing[rttIdx & 2047] = us;
             rttAt[rttIdx & 2047] = now;
             rttIdx++;
