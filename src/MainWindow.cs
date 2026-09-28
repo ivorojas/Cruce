@@ -218,6 +218,7 @@ namespace Cruce
             filesSw.Click += (s, e) => { app.Cfg.Files = filesSw.IsChecked == true; app.Cfg.Save(); };
             autoSw.Click += (s, e) => ToggleAutostart();
             adminBtn.Click += (s, e) => app.RestartElevated();
+            F<Button>("ReportBtn").Click += (s, e) => { try { System.Diagnostics.Process.Start(Metrics.WriteReport(DateTime.Today)); } catch (Exception ex) { Log.Error(ex, "report"); } };
             F<Button>("UpdBtn").Click += (s, e) => app.CheckUpdates(true);
             F<Button>("LogBtn").Click += (s, e) => { try { System.Diagnostics.Process.Start("notepad.exe", "\"" + Log.PathName + "\""); } catch { } };
             for (int i = 0; i < 4; i++)

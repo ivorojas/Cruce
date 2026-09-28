@@ -18,6 +18,7 @@ namespace Cruce
         {
             if (Native.SendInput((uint)i.Length, i, Size) == 0)
             {
+                Interlocked.Increment(ref Diag.InjectBlocked);
                 int err = Marshal.GetLastWin32Error();
                 long now = Link.NowUs();
                 if (now - lastBlockedLog > 5000000)

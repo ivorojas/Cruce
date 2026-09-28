@@ -29,6 +29,7 @@ namespace Cruce
                 Log.Init();
                 Native.SetProcessDpiAwarenessContext(new IntPtr(-4));
                 Console.WriteLine();
+                Link.Trace = Environment.GetEnvironmentVariable("CRUCE_TRACE") == "1";
                 return SelfTest.Run(args.Contains("--inject"));
             }
             if (args.Length == 2 && args[0] == "--write-icon") { IconArt.WriteIco(args[1]); return 0; }
@@ -77,7 +78,7 @@ namespace Cruce
 
     public sealed class AppController
     {
-        public const string Version = "1.6";
+        public const string Version = "1.7";
 
         readonly Application app;
         public readonly Config Cfg;

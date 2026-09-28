@@ -51,6 +51,7 @@ namespace Cruce
         double takeoverAccum;
         long takeoverAt;
 
+        long activeUs, lastTickUs;
         long lastMonCheck, lastSummary, lastCrossings, takeovers, enteredAt, lastHookCheck, lastSlowLog;
         volatile int lastHookTick = Environment.TickCount;
         const uint WM_REHOOK = 0x8001;
@@ -147,6 +148,7 @@ namespace Cruce
         void SlowCheck(long t0, string what)
         {
             double ms = (System.Diagnostics.Stopwatch.GetTimestamp() - t0) * 1000.0 / System.Diagnostics.Stopwatch.Frequency;
+            if (ms > 10) Interlocked.Increment(ref Diag.SlowHooks);
             if (ms > 10 && Link.NowUs() - lastSlowLog > 2000000) { lastSlowLog = Link.NowUs(); Log.Info("LENTO: el hook de {0} tardó {1:0.0} ms", what, ms); }
         }
 
@@ -659,7 +661,18 @@ namespace Cruce
                 case Ev.LogLine:
                     {
                         var pp = peer;
-                        Log.Info("RESUMEN {0}: {1}", pp != null ? pp.Name : "otra PC", System.Text.Encoding.UTF8.GetString(d));
+                        string txt = System.Text.Encoding.UTF8.GetString(d);
+                        if (txt.StartsWith("CSV|"))
+                        {
+                            var mr = MinuteRow.Parse(txt.Substring(4));
+                            if (mr != null)
+                            {
+                                mr.Time = DateTime.Now;
+                                Metrics.Append(mr.ToCsv());
+                                Log.Info("RESUMEN {0}: rtt p95 {1:0} ms, router {2} ms, señal {3}%, canal {4}, vecinos {5}+{6}, causa={7}", mr.Pc, mr.RttP95, mr.RouterP95, mr.Signal, mr.Channel, mr.SameCh, mr.Overlap, mr.Cause);
+                            }
+                        }
+                        else Log.Info("RESUMEN {0}: {1}", pp != null ? pp.Name : "otra PC", txt);
                         break;
                     }
                 case Ev.Takeover:
@@ -692,6 +705,8 @@ namespace Cruce
                     if (lk != null) lk.AnnounceNow();
                 }
             }
+            if (lastTickUs != 0 && mode != Mode.Local) Interlocked.Add(ref activeUs, now - lastTickUs);
+            lastTickUs = now;
             if (now - lastHookCheck > 3000000)
             {
                 lastHookCheck = now;
@@ -708,15 +723,27 @@ namespace Cruce
             {
                 lastSummary = now;
                 var lk2 = link;
-                string sum = lk2 != null && peer != null ? lk2.TakeSummary() : null;
-                if (sum != null)
+                var row = new MinuteRow { Time = DateTime.Now, Pc = cfg.Name };
+                double cpuSys, cpuApp;
+                Diag.TakeCpu(out cpuSys, out cpuApp);
+                int gwCount, gwFails; double gwAvg; long gwP95, gwMax;
+                Diag.TakeRouter(out gwCount, out gwAvg, out gwP95, out gwMax, out gwFails);
+                long act = Interlocked.Exchange(ref activeUs, 0);
+                if (lk2 != null && peer != null && lk2.TakeMinute(row))
                 {
                     long cr = Crossings;
-                    sum += string.Format(", cruces {0}, recuperaciones {1}, modo {2}", cr - lastCrossings, Interlocked.Exchange(ref takeovers, 0), mode);
-                    lastCrossings = cr;
-                    sum += ", " + Diag.WifiShort();
-                    Log.Info("RESUMEN {0}: {1}", cfg.Name, sum);
-                    lk2.QueueReliable(Ev.LogLine, System.Text.Encoding.UTF8.GetBytes(sum));
+                    row.ActiveS = act / 1e6; row.Crossings = (int)(cr - lastCrossings); lastCrossings = cr;
+                    row.CpuSys = cpuSys; row.CpuApp = cpuApp;
+                    row.RouterAvg = gwAvg; row.RouterP95 = gwP95; row.RouterMax = gwMax; row.RouterFails = gwFails;
+                    var wf = Diag.Wifi;
+                    if (wf.OnWifi) { row.Signal = wf.Signal; row.Band = wf.Band; row.Channel = wf.Channel; row.RxMbps = wf.RxMbps; row.SameCh = wf.SameChannel; row.Overlap = wf.Overlapping; row.NeighborMax = wf.NeighborMax; }
+                    row.Stalls = Interlocked.Exchange(ref Diag.Stalls, 0); row.SlowHooks = Interlocked.Exchange(ref Diag.SlowHooks, 0); row.Blocked = Interlocked.Exchange(ref Diag.InjectBlocked, 0);
+                    row.Classify();
+                    string csv = row.ToCsv();
+                    Metrics.Append(csv);
+                    Log.Info("RESUMEN {0}: rtt {1:0.0}/{2:0}/{3:0} ms (prom/p95/max), picos {4}, pérdida {5:0.0}%, router {6}/{7} ms, usando {8:0}s, cruces {9}, {10}, causa={11}",
+                        cfg.Name, row.RttAvg, row.RttP95, row.RttMax, row.Spikes, row.LossPct, row.RouterAvg, row.RouterP95, row.ActiveS, row.Crossings, Diag.WifiShort(), row.Cause);
+                    lk2.QueueReliable(Ev.LogLine, System.Text.Encoding.UTF8.GetBytes("CSV|" + csv));
                 }
             }
             if (mode == Mode.Local) return;

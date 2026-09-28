@@ -509,23 +509,22 @@ namespace Cruce
         long minCount, minSumUs, minMaxUs, minLost, minRecv, minPkts, minSpikes, lastSpikeLog;
 
         /// <summary>Returns a one-line summary of the last period and resets it (null if no samples).</summary>
-        public string TakeSummary()
+        public bool TakeMinute(MinuteRow r)
         {
             lock (gate)
             {
-                string s = null;
+                bool any = minCount > 0 || minPkts > 0;
                 if (minCount > 0)
                 {
                     long target = (long)(minCount * 0.95), acc = 0; int p95 = 0;
                     for (int i = 0; i < minHist.Length; i++) { acc += minHist[i]; if (acc > target) { p95 = i; break; } }
-                    long tot = minLost + minRecv;
-                    s = string.Format(System.Globalization.CultureInfo.InvariantCulture,
-                        "rtt avg {0:0.0} ms, p95 {1} ms, max {2:0.0} ms, picos>30ms {3}, perdida {4:0.00}% ({5}/{6}), paquetes {7}, qos {8}",
-                        minSumUs / 1000.0 / minCount, p95, minMaxUs / 1000.0, minSpikes, tot > 0 ? 100.0 * minLost / tot : 0, minLost, tot, minPkts, qosOn ? "si" : "no");
+                    r.RttAvg = minSumUs / 1000.0 / minCount; r.RttP95 = p95; r.RttMax = minMaxUs / 1000.0;
                 }
+                long tot = minLost + minRecv;
+                r.Spikes = (int)minSpikes; r.LossPct = tot > 0 ? 100.0 * minLost / tot : 0; r.Packets = (int)minPkts;
                 Array.Clear(minHist, 0, minHist.Length);
                 minCount = minSumUs = minMaxUs = minLost = minRecv = minPkts = minSpikes = 0;
-                return s;
+                return any;
             }
         }
 
@@ -569,6 +568,7 @@ namespace Cruce
                     long before = NowUs();
                     Thread.Sleep(hiRes ? 1 : 15);
                     long now = NowUs();
+                    if (now - before > 100000 && peer != null) Interlocked.Increment(ref Diag.Stalls);
                     if (now - before > 100000 && peer != null) Log.Info("FRENADO: el sistema pausó a Cruce {0:0} ms (CPU saturada, suspensión o ahorro de energía)", (now - before) / 1000.0);
                     bool bcast = false, helloPeer = false, down = false;
                     IPEndPoint peerEp = null;
@@ -663,32 +663,60 @@ namespace Cruce
         [DllImport("qwave.dll", SetLastError = true)]
         static extern bool QOSCloseHandle(IntPtr h);
 
+        // The QoS service is demand-started and its calls can block for seconds, so they
+        // never run on the receive thread: a dedicated worker applies the latest endpoint.
+        readonly AutoResetEvent qosWake = new AutoResetEvent(false);
+        volatile IPEndPoint qosWanted;
+        Thread qosThread;
+
         void ApplyQos(IPEndPoint ep)
         {
+            if (IPAddress.IsLoopback(ep.Address)) return;
             lock (gate)
             {
                 if (qosEp != null && qosEp.Equals(ep)) return;
                 qosEp = ep;
-            }
-            try
-            {
-                if (qosHandle == IntPtr.Zero)
+                qosWanted = ep;
+                if (qosThread == null)
                 {
-                    var v = new QOS_VERSION { Major = 1, Minor = 0 };
-                    if (!QOSCreateHandle(ref v, out qosHandle)) { qosHandle = IntPtr.Zero; return; }
+                    qosThread = new Thread(QosLoop) { IsBackground = true, Priority = ThreadPriority.BelowNormal, Name = "cruce-qos" };
+                    qosThread.Start();
                 }
-                if (qosFlow != 0) { QOSRemoveSocketFromFlow(qosHandle, sock.Handle, qosFlow, 0); qosFlow = 0; }
-                var sa = new byte[16];
-                sa[0] = 2; // AF_INET
-                sa[2] = (byte)(ep.Port >> 8); sa[3] = (byte)ep.Port;
-                Buffer.BlockCopy(ep.Address.GetAddressBytes(), 0, sa, 4, 4);
-                uint flow = 0;
-                bool ok = QOSAddSocketToFlow(qosHandle, sock.Handle, sa, 4 /* QOSTrafficTypeVoice */, 2 /* NON_ADAPTIVE */, ref flow);
-                qosFlow = ok ? flow : 0;
-                qosOn = ok;
-                if (!ok) Log.Info("QoS not applied (err {0})", Marshal.GetLastWin32Error());
             }
-            catch (Exception ex) { Log.Info("QoS unavailable: {0}", ex.Message); }
+            qosWake.Set();
+        }
+
+        void QosLoop()
+        {
+            while (running)
+            {
+                qosWake.WaitOne(1000);
+                var ep = qosWanted;
+                if (ep == null || !running) continue;
+                Thread.Sleep(300); // let the endpoint settle
+                if (!running || !ReferenceEquals(ep, qosWanted)) continue;
+                qosWanted = null;
+                var sw = Stopwatch.StartNew();
+                try
+                {
+                    if (qosHandle == IntPtr.Zero)
+                    {
+                        var v = new QOS_VERSION { Major = 1, Minor = 0 };
+                        if (!QOSCreateHandle(ref v, out qosHandle)) { qosHandle = IntPtr.Zero; continue; }
+                    }
+                    if (qosFlow != 0) { QOSRemoveSocketFromFlow(qosHandle, sock.Handle, qosFlow, 0); qosFlow = 0; }
+                    var sa = new byte[16];
+                    sa[0] = 2; // AF_INET
+                    sa[2] = (byte)(ep.Port >> 8); sa[3] = (byte)ep.Port;
+                    Buffer.BlockCopy(ep.Address.GetAddressBytes(), 0, sa, 4, 4);
+                    uint flow = 0;
+                    bool ok = QOSAddSocketToFlow(qosHandle, sock.Handle, sa, 4 /* QOSTrafficTypeVoice */, 2 /* NON_ADAPTIVE */, ref flow);
+                    qosFlow = ok ? flow : 0;
+                    qosOn = ok;
+                    Log.Info("QoS {0} para {1} (tardó {2} ms{3})", ok ? "activo" : "no aplicado", ep, sw.ElapsedMilliseconds, ok ? "" : ", err " + Marshal.GetLastWin32Error());
+                }
+                catch (Exception ex) { Log.Info("QoS no disponible: {0}", ex.Message); }
+            }
         }
 
         public void Dispose()
@@ -702,6 +730,7 @@ namespace Cruce
                 SendRaw(w.B, w.P, new[] { ep });
             }
             running = false;
+            qosWake.Set();
             try { sock.Close(); } catch { }
             if (timerThread != null) timerThread.Join(500);
             if (rxThread != null) rxThread.Join(500);
