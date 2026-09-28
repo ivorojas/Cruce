@@ -11,6 +11,7 @@ namespace Cruce
     public static class Ev
     {
         public const byte Enter = 1, Leave = 2, Button = 3, Wheel = 4, Key = 5, Takeover = 6, LogLine = 7;
+        public const byte DragStart = 8, DragDrop = 9, DragCancel = 10, DragProbe = 11, DragProbeReply = 12, DragPull = 13;
     }
 
     /// <summary>
@@ -229,7 +230,17 @@ namespace Cruce
                 switch (mode)
                 {
                     case Mode.Local:
-                        if (btn >= 0) { SetBit(ref localButtons, btn, down); return false; }
+                        if (btn >= 0)
+                        {
+                            SetBit(ref localButtons, btn, down);
+                            if (btn == 0 && down) { dragSourceRoot = ShellDrag.RootAt(x, y); readyFiles = null; dragNoteLogged = false; }
+                            if (btn == 0 && !down)
+                            {
+                                readyFiles = null;
+                                if (inDragId != 0) { FinishIncomingDragLocked(x, y); return true; }
+                            }
+                            return false;
+                        }
                         if (msg == Native.WM_MOUSEMOVE && peer != null && link != null && !Paused) return TryCrossLocked(x, y);
                         return false;
 
@@ -238,6 +249,7 @@ namespace Cruce
                         if (btn >= 0)
                         {
                             int bit = 1 << btn;
+                            if (btn == 0 && !down && outDragId != 0) { localButtons &= ~1; DropOutgoingLocked(); return true; }
                             if (down) { remoteButtons |= bit; SendButtonLocked(btn, true); return true; }
                             if ((remoteButtons & bit) != 0) { remoteButtons &= ~bit; SendButtonLocked(btn, false); return true; }
                             localButtons &= ~bit; // released a button that was pressed here before crossing
@@ -283,6 +295,7 @@ namespace Cruce
                 {
                     case Mode.Local:
                         localKeys[vk] = !up;
+                        if (vk == 0x1B && !up && inDragId != 0) CancelIncomingLocked();
                         return false;
 
                     case Mode.Remote:
@@ -339,7 +352,15 @@ namespace Cruce
             if (dist < 250) link.Warm(Link.NowUs() + WarmUs);
 
             double cross = Geo.Cross(s, x, y);
-            if (!le.Beyond(cross) || localButtons != 0) return false;
+            if (!le.Beyond(cross)) return false;
+            bool carrying = false;
+            if (localButtons != 0)
+            {
+                // Only a left-button drag of files from Explorer/desktop may cross; anything else stays here.
+                if (localButtons != 1) return false;
+                if (readyFiles == null) { StartDragResolveLocked(); return false; }
+                carrying = true;
+            }
             var m = mons[mi];
             bool h = Geo.Horiz(s);
             double along = Geo.Along(s, x, y);
@@ -357,6 +378,7 @@ namespace Cruce
             park = new POINT((int)ex, (int)ey);
             localDpi = m.Dpi > 0 ? m.Dpi : 96;
             EnterRemoteLocked(nx, ny);
+            if (carrying) BeginOutgoingDragLocked();
             return true;
         }
 
@@ -364,6 +386,7 @@ namespace Cruce
         {
             var l = link;
             if (l == null) return;
+            if (inDragId != 0) CancelIncomingLocked();
             rx = nx; ry = ny; haveRemotePos = true;
             mode = Mode.Remote;
             remoteButtons = 0;
@@ -400,20 +423,28 @@ namespace Cruce
             EnsureEdgesLocked();
             var re = remoteEdge;
             var le = localEdge;
-            if (re != null && le != null && remoteButtons == 0 && ri >= 0 && re.Touches(p.Mons[ri]))
+            if (re != null && le != null && ri >= 0 && re.Touches(p.Mons[ri]))
             {
                 Side s = le.Side;
                 double cr = Geo.Cross(s, nx, ny);
                 double al = Geo.Along(s, nx, ny);
                 if (re.Beyond(cr) && !re.NearCorner(al, CornerGuard))
                 {
-                    double over = Math.Min(re.Overflow(cr) / k, 12);
-                    double la = Edge.Map(al, re, le);
-                    double lx, ly;
-                    Geo.Compose(s, le.InsideAt(over - 1), la, out lx, out ly);
-                    Geo.Clamp(localMons, ref lx, ref ly);
-                    ReturnLocalLocked(new POINT((int)lx, (int)ly), true, "borde");
-                    return;
+                    bool carryingIn = remoteButtons == 1 && probeDragId != 0;
+                    if (remoteButtons == 1 && !carryingIn) ProbeRemoteDragLocked(); // dragging files over there? ask
+                    else if (remoteButtons == 0 || carryingIn)
+                    {
+                        double over = Math.Min(re.Overflow(cr) / k, 12);
+                        double la = Edge.Map(al, re, le);
+                        double lx, ly;
+                        Geo.Compose(s, le.InsideAt(over - 1), la, out lx, out ly);
+                        Geo.Clamp(localMons, ref lx, ref ly);
+                        uint pid = probeDragId;
+                        string plabel = probeLabel;
+                        ReturnLocalLocked(new POINT((int)lx, (int)ly), true, carryingIn ? "trayendo archivos" : "borde");
+                        if (carryingIn) { inDragId = pid; DropUi.ShowGhost(plabel); }
+                        return;
+                    }
                 }
             }
             Geo.Clamp(p.Mons, ref nx, ref ny);
@@ -423,6 +454,8 @@ namespace Cruce
 
         void ReturnLocalLocked(POINT pt, bool sendLeave, string reason)
         {
+            CancelOutgoingLocked("volviste a esta PC antes de soltar");
+            probeDragId = 0;
             var l = link;
             if (l != null)
             {
@@ -442,6 +475,169 @@ namespace Cruce
             if (reason.Contains("no responde")) Flight.Incident("congelado", reason);
             Native.SetCursorPos(pt.X, pt.Y);
             CursorHider.Show();
+        }
+
+        // ------------------------------------------------------------------ drag & drop of files between PCs
+        //
+        // Origin side: while a left-button Explorer drag reaches the edge, the dragged items (= the selection
+        // of the source window) are read, the local drag is cancelled with Esc (so Windows drops nothing
+        // here and never moves a file), and the pointer crosses carrying them.
+        // Destination side: where the button is released, the folder under the cursor is resolved
+        // (desktop, Explorer window or a folder icon), and the origin streams the files straight into it.
+
+        public System.Windows.Threading.Dispatcher Ui;
+        public Func<ClipSync> Clip;
+        IntPtr dragSourceRoot, injDragSourceRoot;
+        string[] readyFiles;
+        bool dragResolving;
+        uint outDragId, inDragId, probeDragId, answeredProbeId;
+        long probeSentAt, answeredAt;
+        string probeLabel = "", answeredLabel = "";
+        readonly Dictionary<uint, string[]> outgoing = new Dictionary<uint, string[]>();
+        static readonly Random rnd = new Random();
+
+        static uint NewId() { lock (rnd) return (uint)rnd.Next(1, int.MaxValue); }
+        static string Label(string[] files) { return files.Length == 1 ? System.IO.Path.GetFileName(files[0].TrimEnd('\\')) : files.Length + " elementos"; }
+
+        bool dragNoteLogged;
+
+        void StartDragResolveLocked()
+        {
+            if (dragResolving || Ui == null) return;
+            if (!ShellDrag.DragActive())
+            {
+                if (!dragNoteLogged) { dragNoteLogged = true; Log.Info("arrastre: botón apretado en el borde, pero no es un arrastre de archivos del Explorador (ventana origen '{0}'): no cruzo", ShellDrag.ClassOf(dragSourceRoot)); }
+                return;
+            }
+            dragResolving = true;
+            var src = dragSourceRoot;
+            Ui.BeginInvoke(new Action(() =>
+            {
+                var sw = System.Diagnostics.Stopwatch.StartNew();
+                var files = ShellDrag.Selection(src);
+                Log.Info("arrastre: detectado en '{0}', {1} elemento(s) seleccionados (leídos en {2} ms)", ShellDrag.ClassOf(src), files.Length, sw.ElapsedMilliseconds);
+                lock (gate)
+                {
+                    dragResolving = false;
+                    if (files.Length > 0 && localButtons == 1 && mode == Mode.Local) readyFiles = files;
+                }
+            }));
+        }
+
+        /// <summary>Esc ends an Explorer drag without dropping anything anywhere.</summary>
+        static void CancelLocalDrag()
+        {
+            ThreadPool.QueueUserWorkItem(_ =>
+            {
+                for (int i = 0; i < 3; i++)
+                {
+                    Inject.Key(0x1B, 0x01, false, false);
+                    Inject.Key(0x1B, 0x01, false, true);
+                    Thread.Sleep(80);
+                    if (!ShellDrag.DragActive()) break;
+                }
+            });
+        }
+
+        void BeginOutgoingDragLocked()
+        {
+            var files = readyFiles;
+            readyFiles = null;
+            if (files == null) return;
+            uint id = NewId();
+            outgoing[id] = files;
+            outDragId = id;
+            CancelLocalDrag();
+            var w = new WBuf(64); w.U32(id); w.U16(files.Length); w.Str(Label(files));
+            Send(Ev.DragStart, w);
+            Log.Info("ARRASTRE: llevando {0} a la otra PC", Label(files));
+        }
+
+        void DropOutgoingLocked()
+        {
+            uint id = outDragId;
+            outDragId = 0;
+            var w = new WBuf(16); w.U32(id); w.I32((int)Math.Floor(rx)); w.I32((int)Math.Floor(ry));
+            Send(Ev.DragDrop, w);
+        }
+
+        void CancelOutgoingLocked(string why)
+        {
+            if (outDragId == 0) return;
+            var w = new WBuf(4); w.U32(outDragId);
+            Send(Ev.DragCancel, w);
+            outgoing.Remove(outDragId);
+            outDragId = 0;
+            Log.Info("ARRASTRE cancelado: {0}", why);
+        }
+
+        void ProbeRemoteDragLocked()
+        {
+            long now = Link.NowUs();
+            if (now - probeSentAt < 700000) return;
+            probeSentAt = now;
+            Send(Ev.DragProbe, new WBuf(1));
+        }
+
+        void CancelIncomingLocked()
+        {
+            if (inDragId == 0) return;
+            var w = new WBuf(4); w.U32(inDragId);
+            Send(Ev.DragCancel, w);
+            inDragId = 0;
+            DropUi.HideGhost();
+            Log.Info("ARRASTRE cancelado (Esc o cruce)");
+        }
+
+        void FinishIncomingDragLocked(int x, int y)
+        {
+            uint id = inDragId;
+            inDragId = 0;
+            DropUi.HideGhost();
+            ResolveAndPull(id, x, y);
+        }
+
+        /// <summary>Destination side: work out the folder under (x, y), expect the files there, ask the origin for them.</summary>
+        void ResolveAndPull(uint id, int x, int y)
+        {
+            var ui = Ui;
+            if (ui == null) return;
+            ui.BeginInvoke(new Action(() =>
+            {
+                var t = ShellDrag.Resolve(x, y);
+                var c = Clip != null ? Clip() : null;
+                if (c != null) c.ExpectDrop(id, new ClipSync.DropSpot { Folder = t.Folder, Kind = t.Kind, X = x, Y = y });
+                DropUi.Progress(id, x, y, "Preparando la copia…", t.Kind == "descargas" ? "Ahí no hay una carpeta: va a Descargas" : t.Folder, 0, 0);
+                var w = new WBuf(4); w.U32(id);
+                Send(Ev.DragPull, w);
+                Log.Info("ARRASTRE: soltado en {0} [{1}]", t.Folder, t.Kind);
+            }));
+        }
+
+        void AnswerProbe()
+        {
+            bool ok;
+            IntPtr src;
+            lock (gate) { ok = mode == Mode.Controlled && (injButtons & 1) != 0; src = injDragSourceRoot; }
+            if (!ok || Ui == null || !ShellDrag.DragActive()) { ReplyProbe(0, ""); return; }
+            if (answeredProbeId != 0 && Link.NowUs() - answeredAt < 3000000) { ReplyProbe(answeredProbeId, answeredLabel); return; }
+            Ui.BeginInvoke(new Action(() =>
+            {
+                var files = ShellDrag.Selection(src);
+                if (files.Length == 0) { ReplyProbe(0, ""); return; }
+                uint id = NewId();
+                lock (gate) outgoing[id] = files;
+                answeredProbeId = id; answeredAt = Link.NowUs(); answeredLabel = Label(files);
+                CancelLocalDrag();
+                ReplyProbe(id, answeredLabel);
+                Log.Info("ARRASTRE: la otra PC se lleva {0}", answeredLabel);
+            }));
+        }
+
+        void ReplyProbe(uint id, string label)
+        {
+            var w = new WBuf(32); w.U32(id); w.Str(label);
+            Send(Ev.DragProbeReply, w);
         }
 
         void HotkeyLocked()
@@ -644,6 +840,7 @@ namespace Cruce
                             ClampLocal(ref x, ref y);
                             injX = x; injY = y;
                             SetBit(ref injButtons, b, down);
+                            if (b == 0 && down) { injDragSourceRoot = ShellDrag.RootAt(x, y); answeredProbeId = 0; }
                         }
                         Inject.Button(b, down, x, y);
                         break;
@@ -683,6 +880,47 @@ namespace Cruce
                             }
                         }
                         else Log.Info("RESUMEN {0}: {1}", pp != null ? pp.Name : "otra PC", txt);
+                        break;
+                    }
+                case Ev.DragStart:
+                    {
+                        r.U32(); r.U16();
+                        DropUi.ShowGhost(r.Str());
+                        break;
+                    }
+                case Ev.DragDrop:
+                    {
+                        uint id = r.U32();
+                        int x = r.I32(), y = r.I32();
+                        ClampLocal(ref x, ref y);
+                        DropUi.HideGhost();
+                        ResolveAndPull(id, x, y);
+                        break;
+                    }
+                case Ev.DragCancel:
+                    {
+                        uint id = r.U32();
+                        DropUi.HideGhost();
+                        lock (gate) { outgoing.Remove(id); if (inDragId == id) inDragId = 0; }
+                        break;
+                    }
+                case Ev.DragProbe:
+                    AnswerProbe();
+                    break;
+                case Ev.DragProbeReply:
+                    {
+                        uint id = r.U32();
+                        string label = r.Str();
+                        lock (gate) { if (id != 0 && mode == Mode.Remote && remoteButtons == 1) { probeDragId = id; probeLabel = label; } }
+                        break;
+                    }
+                case Ev.DragPull:
+                    {
+                        uint id = r.U32();
+                        string[] files = null;
+                        lock (gate) { if (outgoing.TryGetValue(id, out files)) outgoing.Remove(id); }
+                        var c = Clip != null ? Clip() : null;
+                        if (files != null && c != null) c.SendDrop(id, files);
                         break;
                     }
                 case Ev.Takeover:
@@ -725,8 +963,15 @@ namespace Cruce
                 var lii = new LASTINPUTINFO { cbSize = 8 };
                 if (GetLastInputInfo(ref lii) && (int)(lii.dwTime - (uint)lastHookTick) > 1500 && hookThreadId != 0)
                 {
-                    Log.Info("HOOK MUERTO: hubo input que la captura no vio ({0} ms). Reenganchando.", (int)(lii.dwTime - (uint)lastHookTick));
-                    Flight.Incident("hook_muerto", "Windows dejó de pasarle el mouse/teclado a Cruce (pantalla segura, bloqueo o hook desenganchado)");
+                    int gap = (int)(lii.dwTime - (uint)lastHookTick);
+                    if (gap > 60000)
+                        // Long idle, then input Cruce can't see: typing the password on the lock screen (a secure desktop). Normal.
+                        Log.Info("volviste después de {0:0} min sin usar la PC (pantalla bloqueada o segura). Reengancho por las dudas.", gap / 60000.0);
+                    else
+                    {
+                        Log.Info("HOOK MUERTO: hubo input que la captura no vio ({0} ms). Reenganchando.", gap);
+                        Flight.Incident("hook_muerto", "Windows dejó de pasarle el mouse/teclado a Cruce (pantalla segura, UAC o hook desenganchado)");
+                    }
                     lastHookTick = Environment.TickCount;
                     Native.PostThreadMessage(hookThreadId, WM_REHOOK, IntPtr.Zero, IntPtr.Zero);
                 }
@@ -761,6 +1006,7 @@ namespace Cruce
             int gwCount, gwFails; double gwAvg; long gwP95, gwMax;
             Diag.TakeRouter(out gwCount, out gwAvg, out gwP95, out gwMax, out gwFails);
             Diag.TakeExtra(row);
+            Diag.TakePower(row);
             WifiNative.TakeMinute(row);
             long act = Interlocked.Exchange(ref activeUs, 0);
             double ui = TakeUiHang != null ? TakeUiHang() : 0;

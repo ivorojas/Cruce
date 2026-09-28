@@ -213,6 +213,74 @@ namespace Cruce
             return 0;
         }
 
+        /// <summary>A pretend "other PC" that accepts drag-and-drop: every drop lands in <c>dest</c>.</summary>
+        public static int FakeDrop(string secret, int port, int peerPort, string dest, string logPath)
+        {
+            var done = new ManualResetEvent(false);
+            var t = new Thread(() =>
+            {
+                var w = new System.IO.StreamWriter(logPath, false) { AutoFlush = true };
+                var disp = System.Windows.Threading.Dispatcher.CurrentDispatcher;
+                DropUi.Init(disp);
+                var keys = new Keys(secret);
+                ClipSync clip = null;
+                PeerInfo peer = null;
+                Link link = null;
+                var h = new DropHandler();
+                h.Log = s => { lock (w) w.WriteLine(Link.NowUs() / 1000 + "  " + s); };
+                h.OnDrop = (id, x, y) =>
+                {
+                    clip.ExpectDrop(id, new ClipSync.DropSpot { Folder = dest, Kind = "prueba", X = x, Y = y });
+                    var b = new WBuf(4); b.U32(id);
+                    link.QueueReliable(Ev.DragPull, b.ToArray());
+                };
+                h.PeerUp = p => peer = p;
+                clip = new ClipSync(keys, port, () => peer != null ? new IPEndPoint(peer.Ep.Address, peer.TcpPort > 0 ? peer.TcpPort : peerPort) : null, () => new Config(), disp);
+                h.TcpPort = clip.ListenPort;
+                link = new Link(keys, port, peerPort, IPAddress.Loopback, h);
+                link.Active = true;
+                link.Start();
+                System.Windows.Threading.Dispatcher.Run();
+            });
+            t.SetApartmentState(ApartmentState.STA);
+            t.IsBackground = true;
+            t.Start();
+            done.WaitOne();
+            return 0;
+        }
+
+        sealed class DropHandler : ILinkHandler
+        {
+            public Action<string> Log;
+            public Action<uint, int, int> OnDrop;
+            public Action<PeerInfo> PeerUp;
+            public int TcpPort;
+            public HelloInfo GetHello()
+            {
+                var h = new HelloInfo(); h.Name = "NOTEBOOK-FALSA"; h.Mons = new[] { M(0, 0, 1920, 1200, 144) }; h.PeerSide = Side.Right; h.Elevated = true; h.TcpPort = TcpPort;
+                return h;
+            }
+            public void OnPeerUp(PeerInfo p) { PeerUp(p); Log("PEER_UP " + p.Name); }
+            public void OnPeerInfo(PeerInfo p) { PeerUp(p); }
+            public void OnPeerDown() { Log("PEER_DOWN"); }
+            public void OnReliable(byte t, byte[] d)
+            {
+                var r = new RBuf(d, 0, d.Length);
+                switch (t)
+                {
+                    case Ev.Enter: Log("ENTER " + r.I32() + "," + r.I32()); break;
+                    case Ev.Leave: Log("LEAVE"); break;
+                    case Ev.DragStart: { uint id = r.U32(); int n = r.U16(); Log("DRAG_START id=" + id + " n=" + n + " '" + r.Str() + "'"); break; }
+                    case Ev.DragDrop: { uint id = r.U32(); int x = r.I32(), y = r.I32(); Log("DRAG_DROP id=" + id + " en " + x + "," + y); OnDrop(id, x, y); break; }
+                    case Ev.DragCancel: Log("DRAG_CANCEL " + r.U32()); break;
+                    case Ev.Button: Log("BUTTON b=" + r.U8() + " down=" + r.U8()); break;
+                    default: Log("EV " + t); break;
+                }
+            }
+            public void OnMove(int x, int y) { }
+            public void OnTick(long n) { }
+        }
+
         static void InjectTest()
         {
             sb.AppendLine("[Precisión de inyección (mueve el cursor un instante)]");

@@ -354,13 +354,80 @@ namespace Cruce
             try { r.TopCpu = TopCpu(); } catch { }
         }
 
+        // ------------------------------------------------------------ power: plugged in, battery, saver, Windows power mode, plan
+
+        [StructLayout(LayoutKind.Sequential)]
+        struct SYSTEM_POWER_STATUS { public byte ACLineStatus, BatteryFlag, BatteryLifePercent, SystemStatusFlag; public int BatteryLifeTime, BatteryFullLifeTime; }
+        [DllImport("kernel32.dll")] static extern bool GetSystemPowerStatus(out SYSTEM_POWER_STATUS s);
+        [DllImport("powrprof.dll")] static extern uint PowerGetEffectiveOverlayScheme(out Guid g);
+        [DllImport("powrprof.dll")] static extern uint PowerGetActiveScheme(IntPtr root, out IntPtr guid);
+        [DllImport("kernel32.dll")] static extern IntPtr LocalFree(IntPtr p);
+
+        static string ModeName(Guid g)
+        {
+            switch (g.ToString().ToLowerInvariant())
+            {
+                case "961cc777-2547-4f9d-8174-7d86181b8a7a": return "maxima_eficiencia";
+                case "3af9b8d9-7c97-431d-ad78-34a8bfea439f": return "mejor_bateria";
+                case "00000000-0000-0000-0000-000000000000": return "equilibrado";
+                case "ded574b5-45a0-4f42-8737-46345c09c238": return "maximo_rendimiento";
+            }
+            return g.ToString();
+        }
+
+        static string PlanName(Guid g)
+        {
+            switch (g.ToString().ToLowerInvariant())
+            {
+                case "381b4222-f694-41f0-9685-ff5bb260df2e": return "equilibrado";
+                case "8c5e7fda-e8bf-4a96-9a85-a6e23a8c635c": return "alto_rendimiento";
+                case "a1841308-3541-4fab-bc81-f71556f20b4a": return "economizador";
+                case "e9a42b02-d5df-448d-aa00-03f14749eb61": return "maximo_rendimiento";
+            }
+            return "personalizado";
+        }
+
+        public static void TakePower(MinuteRow r)
+        {
+            try
+            {
+                SYSTEM_POWER_STATUS s;
+                if (GetSystemPowerStatus(out s))
+                {
+                    r.Power = s.ACLineStatus == 1 ? "enchufada" : s.ACLineStatus == 0 ? "bateria" : "";
+                    r.BatteryPct = s.BatteryLifePercent == 255 ? -1 : s.BatteryLifePercent;
+                    r.Saver = (s.SystemStatusFlag & 1) != 0 ? 1 : 0;
+                }
+            }
+            catch { }
+            try { Guid g; if (PowerGetEffectiveOverlayScheme(out g) == 0) r.PowerMode = ModeName(g); } catch { }
+            try
+            {
+                IntPtr p;
+                if (PowerGetActiveScheme(IntPtr.Zero, out p) == 0)
+                {
+                    var g = (Guid)Marshal.PtrToStructure(p, typeof(Guid));
+                    LocalFree(p);
+                    r.Plan = PlanName(g);
+                }
+            }
+            catch { }
+        }
+
+        public static string PowerText()
+        {
+            var r = new MinuteRow();
+            TakePower(r);
+            return string.Format("{0}, batería {1}%, ahorro de batería {2}, modo {3}, plan {4}", r.Power, r.BatteryPct, r.Saver == 1 ? "sí" : "no", r.PowerMode, r.Plan);
+        }
+
         /// <summary>One-line picture of the current state, for incident files.</summary>
         public static string Snapshot()
         {
             var sb = new StringBuilder();
             if (WifiNative.Available) sb.AppendFormat("wifi {0} dBm, calidad {1}%, canal {2}, rx {3} / tx {4} Mbps, baja latencia {5}; ", WifiNative.Rssi, WifiNative.Quality, WifiNative.Channel, WifiNative.RxKbps / 1000, WifiNative.TxKbps / 1000, WifiNative.LowLatency ? "sí" : "no");
             else sb.Append(wifiText + "; ");
-            sb.AppendFormat("ping router {0} ms, internet {1} ms", LastRouterMs, LastInetMs);
+            sb.AppendFormat("ping router {0} ms, internet {1} ms; energía: {2}", LastRouterMs, LastInetMs, PowerText());
             return sb.ToString();
         }
 
@@ -403,8 +470,7 @@ namespace Cruce
                 }
                 var gw = Gateway();
                 Log.Info("router: {0}", gw != null ? gw.ToString() : "no encontrado");
-                var ps = System.Windows.Forms.SystemInformation.PowerStatus;
-                Log.Info("energía: {0}, batería {1:0}%", ps.PowerLineStatus == System.Windows.Forms.PowerLineStatus.Online ? "enchufada" : "batería", ps.BatteryLifePercent * 100);
+                Log.Info("energía: {0}", PowerText());
             }
             catch (Exception ex) { Log.Error(ex, "diag"); }
         }

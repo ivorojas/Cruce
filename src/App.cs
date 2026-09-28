@@ -33,7 +33,8 @@ namespace Cruce
                 return SelfTest.Run(args.Contains("--inject"));
             }
             if (args.Length == 2 && args[0] == "--write-icon") { IconArt.WriteIco(args[1]); return 0; }
-            if (args.Length == 5 && args[0] == "--fake-peer") { Log.Init(); return SelfTest.FakePeer(args[1], int.Parse(args[2]), int.Parse(args[3]), args[4]); }
+            if (args.Length == 6 && args[0] == "--fake-drop") { Log.Init("cruce-prueba.log"); Native.SetProcessDpiAwarenessContext(new IntPtr(-4)); return SelfTest.FakeDrop(args[1], int.Parse(args[2]), int.Parse(args[3]), args[4], args[5]); }
+            if (args.Length == 5 && args[0] == "--fake-peer") { Log.Init("cruce-prueba.log"); return SelfTest.FakePeer(args[1], int.Parse(args[2]), int.Parse(args[3]), args[4]); }
 
             Native.SetProcessDpiAwarenessContext(new IntPtr(-4)); // per-monitor v2: exact physical pixels
             AppContext.SetSwitch("Switch.System.Windows.DoNotScaleForDpiChanges", false);
@@ -78,7 +79,7 @@ namespace Cruce
 
     public sealed class AppController
     {
-        public const string Version = "1.8";
+        public const string Version = "1.9";
 
         readonly Application app;
         public readonly Config Cfg;
@@ -105,6 +106,9 @@ namespace Cruce
             IsElevated = Autostart.IsAdmin();
             CursorHider.Init();
             Engine = new Engine(Cfg);
+            Engine.Ui = app.Dispatcher;
+            Engine.Clip = () => clip;
+            DropUi.Init(app.Dispatcher);
             Engine.IsElevated = () => IsElevated;
             Engine.Notify += Notify;
             Engine.Start();

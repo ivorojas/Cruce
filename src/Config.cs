@@ -109,12 +109,14 @@ namespace Cruce
 
         public static string PathName { get { return path; } }
 
-        public static void Init()
+        public static void Init() { Init("cruce.log"); }
+
+        public static void Init(string fileName)
         {
             try
             {
                 Directory.CreateDirectory(Config.Dir);
-                path = Path.Combine(Config.Dir, "cruce.log");
+                path = Path.Combine(Config.Dir, fileName);
                 var fi = new FileInfo(path);
                 if (fi.Exists && fi.Length > 1000000) { File.Delete(path + ".1"); File.Move(path, path + ".1"); }
             }

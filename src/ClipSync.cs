@@ -5,6 +5,7 @@ using System.IO;
 using System.Linq;
 using System.Net;
 using System.Net.Sockets;
+using System.Runtime.InteropServices;
 using System.Security.Cryptography;
 using System.Text;
 using System.Threading;
@@ -22,7 +23,7 @@ namespace Cruce
     /// </summary>
     public sealed class ClipSync : IDisposable
     {
-        const byte K_TEXT = 10, K_IMAGE = 11, K_FILES = 12, K_CHUNK = 13, K_END = 14;
+        const byte K_TEXT = 10, K_IMAGE = 11, K_FILES = 12, K_CHUNK = 13, K_END = 14, K_DROP = 15;
         public const long MaxFilesBytes = 2L << 30; // 2 GB per copy
         const int Chunk = 1 << 20;
 
@@ -137,6 +138,11 @@ namespace Cruce
             if (sending != null) sending.Cancel();
             var cts = new CancellationTokenSource();
             sending = cts;
+            Send(addr, body, cts.Token, "portapapeles");
+        }
+
+        void Send(IPEndPoint addr, Action<Stream> body, CancellationToken token, string what)
+        {
             ThreadPool.QueueUserWorkItem(_ =>
             {
                 try
@@ -145,23 +151,57 @@ namespace Cruce
                     {
                         tcp.NoDelay = true;
                         var ar = tcp.BeginConnect(addr.Address, addr.Port, null, null);
-                        if (!ar.AsyncWaitHandle.WaitOne(3000)) return;
+                        if (!ar.AsyncWaitHandle.WaitOne(3000)) { Log.Info("{0}: no pude conectar con la otra PC", what); return; }
                         tcp.EndConnect(ar);
-                        tcp.SendTimeout = 15000;
+                        tcp.SendTimeout = 30000;
+                        QosBackground(tcp.Client);
                         using (var s = tcp.GetStream())
                         {
-                            cancel = cts.Token;
+                            cancel = token;
                             var sw = System.Diagnostics.Stopwatch.StartNew();
                             body(s);
                             s.Flush();
-                            Log.Info("portapapeles enviado en {0} ms", sw.ElapsedMilliseconds);
+                            Log.Info("{0} enviado en {1} ms", what, sw.ElapsedMilliseconds);
                         }
                     }
                 }
                 catch (OperationCanceledException) { }
-                catch (Exception ex) { Log.Info("PORTAPAPELES: fallo al enviar: {0}", ex.Message); }
+                catch (Exception ex) { Log.Info("{0}: fallo al enviar: {1}", what.ToUpperInvariant(), ex.Message); }
                 finally { Activity = ""; }
             });
+        }
+
+        // Bulk transfers are marked "background" so, on Wi-Fi, they queue behind the mouse traffic (marked "voice").
+        [DllImport("qwave.dll")] static extern bool QOSCreateHandle(ref QosVer v, out IntPtr h);
+        [DllImport("qwave.dll")] static extern bool QOSAddSocketToFlow(IntPtr h, IntPtr s, IntPtr dest, int type, uint flags, ref uint flow);
+        [StructLayout(LayoutKind.Sequential)] struct QosVer { public ushort Major, Minor; }
+        static IntPtr qosBg;
+
+        static void QosBackground(Socket s)
+        {
+            try
+            {
+                if (qosBg == IntPtr.Zero) { var v = new QosVer { Major = 1 }; if (!QOSCreateHandle(ref v, out qosBg)) return; }
+                uint flow = 0;
+                QOSAddSocketToFlow(qosBg, s.Handle, IntPtr.Zero, 1 /* QOSTrafficTypeBackground */, 0, ref flow);
+            }
+            catch { }
+        }
+
+        // ------------------------------------------------------------- drag and drop between PCs
+
+        public sealed class DropSpot { public string Folder, Kind; public int X, Y; }
+        readonly System.Collections.Concurrent.ConcurrentDictionary<uint, DropSpot> drops = new System.Collections.Concurrent.ConcurrentDictionary<uint, DropSpot>();
+
+        /// <summary>Remembers where the files of drag <paramref name="id"/> must land on this PC.</summary>
+        public void ExpectDrop(uint id, DropSpot spot) { drops[id] = spot; }
+
+        /// <summary>Streams the dragged files to the other PC (called on the PC where the drag started).</summary>
+        public void SendDrop(uint id, string[] paths)
+        {
+            var addr = peerAddr();
+            if (addr == null) { Log.Info("arrastre: la otra PC no está conectada"); return; }
+            Send(addr, s => SendFiles(s, paths, K_DROP, id), CancellationToken.None, "arrastre");
         }
 
         [ThreadStatic] static CancellationToken cancel;
@@ -177,7 +217,9 @@ namespace Cruce
             s.Write(sealedFrame, 0, sealedFrame.Length);
         }
 
-        void SendFiles(Stream s, string[] roots)
+        void SendFiles(Stream s, string[] roots) { SendFiles(s, roots, K_FILES, 0); }
+
+        void SendFiles(Stream s, string[] roots, byte kind, uint dropId)
         {
             // Flatten folders into (relative path, full path, size)
             var items = new List<Tuple<string, string, long>>();
@@ -194,14 +236,15 @@ namespace Cruce
                 }
             }
             long total = items.Where(i => i.Item3 > 0).Sum(i => i.Item3);
-            if (total > MaxFilesBytes) { Say("Archivos demasiado grandes para compartir (más de 2 GB)."); return; }
+            if (kind == K_FILES && total > MaxFilesBytes) { Say("Archivos demasiado grandes para el portapapeles (más de 2 GB): arrastralos a la otra pantalla."); return; }
 
             var w = new WBuf(1024);
+            if (kind == K_DROP) w.U32(dropId);
             w.U16(roots.Length);
             foreach (var r in roots) w.Str(Path.GetFileName(r.TrimEnd('\\')));
             w.I32(items.Count);
             foreach (var i in items) { w.Str(i.Item1); w.I64(i.Item3); }
-            WriteFrame(s, K_FILES, w.B, 0, w.P);
+            WriteFrame(s, kind, w.B, 0, w.P);
 
             long sent = 0;
             var buf = new byte[Chunk];
@@ -293,6 +336,9 @@ namespace Cruce
                         case K_FILES:
                             tmpDir = ReceiveFiles(s, first);
                             break;
+                        case K_DROP:
+                            ReceiveDrop(s, first);
+                            break;
                     }
                 }
             }
@@ -365,6 +411,117 @@ namespace Cruce
             ui.BeginInvoke(new Action(() => SetClip(() => Clipboard.SetFileDropList(list))));
             if (total > 20 << 20) Say("Archivos listos: pegalos con Ctrl+V");
             return dir;
+        }
+
+        static string Unique(string folder, string name, bool isDir)
+        {
+            if (!File.Exists(Path.Combine(folder, name)) && !Directory.Exists(Path.Combine(folder, name))) return name;
+            string stem = isDir ? name : Path.GetFileNameWithoutExtension(name), ext = isDir ? "" : Path.GetExtension(name);
+            for (int i = 2; ; i++)
+            {
+                var n = stem + " (" + i + ")" + ext;
+                if (!File.Exists(Path.Combine(folder, n)) && !Directory.Exists(Path.Combine(folder, n))) return n;
+            }
+        }
+
+        /// <summary>Writes dragged files straight into the folder where they were dropped, with a progress card there.</summary>
+        void ReceiveDrop(Stream s, byte[] header)
+        {
+            var r = new RBuf(header, 1, header.Length - 1);
+            uint id = r.U32();
+            int rootCount = r.U16();
+            var roots = new List<string>();
+            for (int i = 0; i < rootCount; i++) roots.Add(SafeRel(r.Str()));
+            int count = r.I32();
+            var items = new List<Tuple<string, long>>();
+            for (int i = 0; i < count; i++) items.Add(Tuple.Create(SafeRel(r.Str()), r.I64()));
+            long total = items.Where(i => i.Item2 > 0).Sum(i => i.Item2);
+
+            // The drop location is resolved on this PC when the button is released; it may land a moment after the data.
+            DropSpot spot = null;
+            for (int i = 0; i < 300 && !drops.TryRemove(id, out spot); i++) Thread.Sleep(50);
+            if (spot == null)
+            {
+                spot = new DropSpot { Folder = Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.UserProfile), "Downloads"), Kind = "descargas" };
+                POINT c; Native.GetCursorPos(out c); spot.X = c.X; spot.Y = c.Y;
+            }
+            Directory.CreateDirectory(spot.Folder);
+
+            // Each dragged item keeps its name; if it already exists there, "name (2)" like Windows does.
+            var map = new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase);
+            foreach (var root in roots)
+            {
+                bool isDir = items.Any(it => it.Item1.StartsWith(root + "\\", StringComparison.OrdinalIgnoreCase));
+                map[root] = Unique(spot.Folder, root, isDir);
+            }
+            Func<string, string> dest = rel =>
+            {
+                int k = rel.IndexOf('\\');
+                string first = k < 0 ? rel : rel.Substring(0, k), rest = k < 0 ? "" : rel.Substring(k + 1);
+                string mapped;
+                if (!map.TryGetValue(first, out mapped)) mapped = first;
+                return Path.Combine(spot.Folder, mapped, rest);
+            };
+
+            string label = roots.Count == 1 ? roots[0] : roots.Count + " elementos";
+            string where = spot.Kind == "escritorio" ? "el escritorio" : spot.Kind == "descargas" ? "Descargas" : Path.GetFileName(spot.Folder.TrimEnd('\\'));
+            Log.Info("arrastre recibido: {0} ({1}) → {2} [{3}]", label, DropUi.Size(total), spot.Folder, spot.Kind);
+            var created = new List<string>();
+            var sw = System.Diagnostics.Stopwatch.StartNew();
+            long got = 0, lastUi = 0;
+            byte[] pending = null;
+            int pendingOff = 0;
+            try
+            {
+                DropUi.Progress(id, spot.X, spot.Y, "Recibiendo " + label, "0% · " + DropUi.Size(total), 0, 0);
+                foreach (var it in items)
+                {
+                    var full = dest(it.Item1);
+                    if (it.Item2 < 0) { Directory.CreateDirectory(full); created.Add(full); continue; }
+                    Directory.CreateDirectory(Path.GetDirectoryName(full));
+                    string part = full + ".cruce-parcial";
+                    created.Add(part);
+                    using (var fs = new FileStream(part, FileMode.Create, FileAccess.Write))
+                    {
+                        long left = it.Item2;
+                        while (left > 0)
+                        {
+                            if (pending == null || pendingOff >= pending.Length)
+                            {
+                                var f = ReadFrame(s);
+                                if (f == null || f[0] != K_CHUNK) throw new IOException("se cortó la transferencia");
+                                pending = f; pendingOff = 1;
+                            }
+                            int n = (int)Math.Min(left, pending.Length - pendingOff);
+                            fs.Write(pending, pendingOff, n);
+                            pendingOff += n; left -= n; got += n;
+                            long ms = sw.ElapsedMilliseconds;
+                            if (ms - lastUi > 120)
+                            {
+                                lastUi = ms;
+                                double speed = got / Math.Max(0.001, ms / 1000.0);
+                                double eta = (total - got) / Math.Max(1, speed);
+                                DropUi.Progress(id, spot.X, spot.Y, "Recibiendo " + label,
+                                    string.Format("{0:0}% · {1} de {2} · {3}/s · faltan {4:0} s", 100.0 * got / Math.Max(1, total), DropUi.Size(got), DropUi.Size(total), DropUi.Size((long)speed), eta),
+                                    (double)got / Math.Max(1, total), 0);
+                            }
+                        }
+                    }
+                    if (File.Exists(full)) full = Path.Combine(Path.GetDirectoryName(full), Unique(Path.GetDirectoryName(full), Path.GetFileName(full), false));
+                    File.Move(part, full);
+                    created[created.Count - 1] = full;
+                }
+                var end = ReadFrame(s);
+                if (end == null || end[0] != K_END) throw new IOException("transferencia incompleta");
+                DropUi.Progress(id, spot.X, spot.Y, "Listo ✓  " + label, "en " + where + " · " + DropUi.Size(total) + " en " + (sw.ElapsedMilliseconds / 1000.0).ToString("0.0") + " s", 1, 1);
+                Log.Info("arrastre completo: {0} en {1:0.0} s", DropUi.Size(total), sw.ElapsedMilliseconds / 1000.0);
+            }
+            catch (Exception ex)
+            {
+                Log.Info("ARRASTRE: falló la recepción: {0}", ex.Message);
+                foreach (var p in created.Where(p => p.EndsWith(".cruce-parcial"))) try { File.Delete(p); } catch { }
+                DropUi.Progress(id, spot.X, spot.Y, "No se pudo copiar " + label, ex.Message, (double)got / Math.Max(1, total), 2);
+            }
         }
 
         void SetClip(Action set)

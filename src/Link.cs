@@ -585,7 +585,11 @@ namespace Cruce
                 long tot = minLost + minRecv;
                 r.Spikes = (int)minSpikes; r.LossPct = tot > 0 ? 100.0 * minLost / tot : 0; r.Packets = (int)minPkts;
                 double mx;
+                // One-way delay relative to the best packet of the minute: immune to the small clock-sync bias.
+                double best = -1;
+                for (int i = 0; i < owdHist.Length; i++) if (owdHist[i] > 0) { best = i * 0.25; break; }
                 r.OwdP50 = Pct(owdHist, 0.5, out mx); r.OwdP95 = Pct(owdHist, 0.95, out mx); r.OwdMax = mx;
+                if (best >= 0) { r.OwdP50 -= best; r.OwdP95 -= best; r.OwdMax -= best; }
                 r.CaptureP95 = Pct(capHist, 0.95, out mx);
                 r.Stutters = (int)minStutters; r.StutterMaxMs = minStutterMax / 1000.0;
                 Array.Clear(owdHist, 0, owdHist.Length); Array.Clear(capHist, 0, capHist.Length);

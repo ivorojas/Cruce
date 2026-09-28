@@ -20,9 +20,12 @@ namespace Cruce
         public double NetRxKBs = -1, NetTxKBs = -1, NetPeakKBs = -1, InetAvg = -1, InetP95 = -1, CpuMhzPct = -1, UiHangMs;
         public int Stutters, WifiFailures = -1, WifiScans = -1, WifiRoams = -1, WifiDisconnects = -1, WifiEvents = -1, InetFails, Incidents, LowLatency = -1;
         public string TopCpu = "";
+        // v1.9: power
+        public string Power = "", PowerMode = "", Plan = "";
+        public int BatteryPct = -1, Saver = -1;
 
         public const string Header = "fecha_hora;pc;activo_s;cruces;rtt_prom_ms;rtt_p95_ms;rtt_max_ms;picos_30ms;perdida_pct;paquetes;router_prom_ms;router_p95_ms;router_max_ms;router_fallas;wifi_senal_pct;wifi_banda;wifi_canal;wifi_rx_mbps;redes_mismo_canal;redes_solapadas;vecino_mas_fuerte;cpu_sistema_pct;cpu_cruce_pct;frenadas;hook_lento;bloqueos_windows;causa"
-            + ";tramo_red_p50_ms;tramo_red_p95_ms;tramo_red_max_ms;captura_p95_ms;demora_windows_p95_ms;aplicar_p95_us;tirones;tiron_max_ms;wifi_rssi_prom_dbm;wifi_rssi_min_dbm;wifi_reintentos_pct;wifi_fallas_tx;wifi_escaneos;wifi_roaming;wifi_desconexiones;wifi_eventos;red_bajada_kbs;red_subida_kbs;red_pico_kbs;internet_prom_ms;internet_p95_ms;internet_fallas;cpu_frecuencia_pct;top_cpu;incidentes;ui_colgada_ms;wifi_baja_latencia";
+            + ";tramo_red_p50_ms;tramo_red_p95_ms;tramo_red_max_ms;captura_p95_ms;demora_windows_p95_ms;aplicar_p95_us;tirones;tiron_max_ms;wifi_rssi_prom_dbm;wifi_rssi_min_dbm;wifi_reintentos_pct;wifi_fallas_tx;wifi_escaneos;wifi_roaming;wifi_desconexiones;wifi_eventos;red_bajada_kbs;red_subida_kbs;red_pico_kbs;internet_prom_ms;internet_p95_ms;internet_fallas;cpu_frecuencia_pct;top_cpu;incidentes;ui_colgada_ms;wifi_baja_latencia;energia;bateria_pct;ahorro_bateria;modo_energia;plan_energia";
 
         static readonly CultureInfo Inv = CultureInfo.InvariantCulture;
         static string D(double v) { return v < 0 ? "" : v.ToString("0.##", Inv); }
@@ -62,7 +65,8 @@ namespace Cruce
                 D(CpuSys), D(CpuApp), I(Stalls), I(SlowHooks), I(Blocked), Cause,
                 D(OwdP50), D(OwdP95), D(OwdMax), D(CaptureP95), D(HookDelayP95), D(InjectP95Us), I(Stutters), D(StutterMaxMs), Dn(RssiAvg), Dn(RssiMin), D(WifiRetryPct),
                 I(WifiFailures), I(WifiScans), I(WifiRoams), I(WifiDisconnects), I(WifiEvents), D(NetRxKBs), D(NetTxKBs), D(NetPeakKBs), D(InetAvg), D(InetP95), I(InetFails),
-                D(CpuMhzPct), S(TopCpu), I(Incidents), D(UiHangMs), I(LowLatency)
+                D(CpuMhzPct), S(TopCpu), I(Incidents), D(UiHangMs), I(LowLatency),
+                S(Power), I(BatteryPct), I(Saver), S(PowerMode), S(Plan)
             });
         }
 
@@ -88,6 +92,10 @@ namespace Cruce
                 m.WifiFailures = n(38); m.WifiScans = n(39); m.WifiRoams = n(40); m.WifiDisconnects = n(41); m.WifiEvents = n(42);
                 m.NetRxKBs = d(43); m.NetTxKBs = d(44); m.NetPeakKBs = d(45); m.InetAvg = d(46); m.InetP95 = d(47); m.InetFails = Math.Max(0, n(48));
                 m.CpuMhzPct = d(49); m.TopCpu = f.Length > 50 ? f[50] : ""; m.Incidents = Math.Max(0, n(51)); m.UiHangMs = Math.Max(0, d(52)); m.LowLatency = n(53);
+            }
+            if (f.Length > 54)
+            {
+                m.Power = f[54]; m.BatteryPct = n(55); m.Saver = n(56); m.PowerMode = f.Length > 57 ? f[57] : ""; m.Plan = f.Length > 58 ? f[58] : "";
             }
             return m;
         }
@@ -297,7 +305,7 @@ namespace Cruce
             foreach (var c in CauseOrder) sb.AppendFormat("<span><span class='sw' style='background:{0}'></span>{1}</span>", CauseCol(c), H(CauseName(c)));
             sb.Append("</div></div>");
 
-            sb.Append("<h2>Detalle por hora</h2><div class='card scroll'><table><tr><th>Hora</th><th>Conectadas</th><th>Usando</th><th>Con lag</th><th>Ida y vuelta p95</th><th>Tramo red p95</th><th>Tirones</th><th>Ping router (WiFi)</th><th>Ping internet</th><th>Señal</th><th>Reintentos WiFi</th><th>Escaneos</th><th>Vecinos</th><th>Tráfico máx</th><th>Causa principal</th></tr>");
+            sb.Append("<h2>Detalle por hora</h2><div class='card scroll'><table><tr><th>Hora</th><th>Conectadas</th><th>Usando</th><th>Con lag</th><th>Ida y vuelta p95</th><th>Tramo red p95</th><th>Tirones</th><th>Ping router (WiFi)</th><th>Ping internet</th><th>Señal</th><th>Reintentos WiFi</th><th>Escaneos</th><th>Vecinos</th><th>Tráfico máx</th><th>Energía</th><th>Causa principal</th></tr>");
             foreach (var g in hours)
             {
                 var hr = g.SelectMany(m => m.Rows).ToList();
@@ -307,7 +315,9 @@ namespace Cruce
                 var rssi = wr.Where(r => r.RssiAvg != 0).ToList();
                 string sig = rssi.Count > 0 ? rssi.Average(r => r.RssiAvg).ToString("0", inv) + " dBm" : wr.Any(r => r.Signal >= 0) ? wr.Where(r => r.Signal >= 0).Average(r => r.Signal).ToString("0", inv) + "%" : "–";
                 var retr = wr.Where(r => r.WifiRetryPct >= 0).ToList();
-                sb.AppendFormat(inv, "<tr><td>{0:00}:00</td><td>{1}</td><td>{2}</td><td>{3}</td><td>{4}</td><td>{5}</td><td>{6}</td><td>{7}</td><td>{8}</td><td>{9}</td><td>{10}</td><td>{11}</td><td>{12}</td><td>{13}</td><td>{14}</td></tr>",
+                var pw = (wr.Count > 0 ? wr : hr).Where(r => r.Power != "").GroupBy(r => (r.PowerMode ?? "").Replace('_', ' ') + " · " + r.Power + (r.Saver == 1 ? " · ahorro" : "")).OrderByDescending(x => x.Count()).FirstOrDefault();
+                string energy = pw != null ? pw.Key : "–";
+                sb.AppendFormat(inv, "<tr><td>{0:00}:00</td><td>{1}</td><td>{2}</td><td>{3}</td><td>{4}</td><td>{5}</td><td>{6}</td><td>{7}</td><td>{8}</td><td>{9}</td><td>{10}</td><td>{11}</td><td>{12}</td><td>{13}</td><td>{15}</td><td>{14}</td></tr>",
                     g.Key, g.Count(), g.Count(m => m.Active), lagm.Count,
                     Ms(hr.Select(r => r.RttP95)), Ms(hr.Select(r => r.OwdP95)), hr.Sum(r => r.Stutters),
                     Ms(wr.Select(r => r.RouterP95)), Ms(hr.Select(r => r.InetP95)), sig,
@@ -315,7 +325,7 @@ namespace Cruce
                     wr.Where(r => r.WifiScans > 0).Sum(r => r.WifiScans),
                     wr.Any(r => r.SameCh >= 0) ? wr.Where(r => r.SameCh >= 0).Average(r => r.SameCh + Math.Max(0, r.Overlap)).ToString("0.#", inv) : "–",
                     hr.Any(r => r.NetPeakKBs >= 0) ? (hr.Max(r => r.NetPeakKBs) / 1024.0).ToString("0.0", inv) + " MB/s" : "–",
-                    H(main));
+                    H(main), H(energy));
             }
             sb.Append("</table></div>");
 
