@@ -804,7 +804,7 @@ namespace Cruce
                 SendRaw(w.B, w.P, new[] { ep });
             }
             running = false;
-            qosWake.Set();
+            try { qosWake.Set(); } catch { }
             try { sock.Close(); } catch { }
             if (timerThread != null) timerThread.Join(500);
             if (rxThread != null) rxThread.Join(500);
