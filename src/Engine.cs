@@ -1,4 +1,4 @@
-using System;
+﻿using System;
 using System.Collections.Generic;
 using System.Runtime.InteropServices;
 using System.Threading;
@@ -704,7 +704,7 @@ namespace Cruce
                 var t = ShellDrag.Resolve(x, y);
                 var c = Clip != null ? Clip() : null;
                 if (c != null) c.ExpectDrop(id, new ClipSync.DropSpot { Folder = t.Folder, Kind = t.Kind, X = x, Y = y });
-                DropUi.Progress(id, x, y, "Preparando la copia…", t.Kind == "descargas" ? "Ahí no hay una carpeta: va a Descargas" : t.Folder, 0, 0);
+                DropUi.Progress(id, x, y, L.T("Preparando la copia…"), t.Kind == "descargas" ? L.T("Ahí no hay una carpeta: va a Descargas") : t.Folder, 0, 0);
                 var w = new WBuf(4); w.U32(id);
                 Send(Ev.DragPull, w);
                 Log.Info("ARRASTRE: soltado en {0} [{1}]", t.Folder, t.Kind);
@@ -853,7 +853,7 @@ namespace Cruce
             lock (gate) { DropSessionLocked(); peer = p; edgesValid = false; haveRemotePos = false; }
             SyncSide(p, true);
             var n = Notify;
-            if (n != null) n("Conectado con " + p.Name);
+            if (n != null) n(L.F("Conectado con {0}", p.Name));
         }
 
         public void OnPeerInfo(PeerInfo p)
@@ -868,7 +868,7 @@ namespace Cruce
             if (mode != Mode.Local) Flight.Incident("desconexion", "se perdió la conexión mientras usabas la otra PC");
             lock (gate) { old = peer; DropSessionLocked(); peer = null; edgesValid = false; }
             var n = Notify;
-            if (n != null && old != null) n("Se desconectó " + old.Name);
+            if (n != null && old != null) n(L.F("Se desconectó {0}", old.Name));
         }
 
         /// <summary>The layout is set on either PC; the most recent choice wins on both.</summary>

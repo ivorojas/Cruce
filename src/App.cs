@@ -1,4 +1,4 @@
-using System;
+﻿using System;
 using System.Diagnostics;
 using System.Drawing;
 using System.Linq;
@@ -26,13 +26,14 @@ namespace Cruce
             if (args.Contains("--selftest"))
             {
                 AttachConsole(-1);
-                Log.Init();
+                Log.Init("cruce-prueba.log");
                 Native.SetProcessDpiAwarenessContext(new IntPtr(-4));
                 Console.WriteLine();
                 Link.Trace = Environment.GetEnvironmentVariable("CRUCE_TRACE") == "1";
                 return SelfTest.Run(args.Contains("--inject"));
             }
             if (args.Length == 2 && args[0] == "--write-icon") { IconArt.WriteIco(args[1]); return 0; }
+            if (args.Length == 4 && args[0] == "--ui-shot") { Native.SetProcessDpiAwarenessContext(new IntPtr(-4)); Log.Init("cruce-prueba.log"); return AppController.UiShot(args[1], args[2] == "es", args[3] == "1"); }
             if (args.Length == 6 && args[0] == "--fake-drop") { Log.Init("cruce-prueba.log"); Native.SetProcessDpiAwarenessContext(new IntPtr(-4)); return SelfTest.FakeDrop(args[1], int.Parse(args[2]), int.Parse(args[3]), args[4], args[5]); }
             if (args.Length == 5 && args[0] == "--fake-peer") { Log.Init("cruce-prueba.log"); return SelfTest.FakePeer(args[1], int.Parse(args[2]), int.Parse(args[3]), args[4]); }
 
@@ -79,7 +80,7 @@ namespace Cruce
 
     public sealed class AppController
     {
-        public const string Version = "1.17";
+        public const string Version = "1.18";
 
         readonly Application app;
         public readonly Config Cfg;
@@ -99,6 +100,7 @@ namespace Cruce
         {
             this.app = app;
             Cfg = Config.Load();
+            L.English = Cfg.Language != "es";
         }
 
         public void Start(bool show)
@@ -115,7 +117,7 @@ namespace Cruce
             Api.Start(Engine, Cfg, () => clip);
             Presence.Changed = Api.PushState;
             Presence.Start(() => Engine.Mode, () => { var p = Engine.Peer; return p != null ? p.Name : ""; });
-            if (!Engine.HooksOk) LinkError = "No se pudo capturar el mouse/teclado";
+            if (!Engine.HooksOk) LinkError = L.T("No se pudo capturar el mouse/teclado");
             Diag.Start();
             Diag.LogStartup(Cfg, IsElevated);
             WifiNative.CurrentMode = () => Engine.Mode;
@@ -143,13 +145,48 @@ namespace Cruce
             t.Start();
         }
 
+        /// <summary>Testing: renders the window off-screen to a PNG (no hooks, no network, no focus change, config untouched).</summary>
+        public static int UiShot(string path, bool spanish, bool settings)
+        {
+            var wpf = new Application { ShutdownMode = ShutdownMode.OnExplicitShutdown };
+            var ctl = new AppController(wpf);
+            L.English = !spanish;
+            ctl.IsElevated = Autostart.IsAdmin();
+            ctl.Engine = new Engine(ctl.Cfg);
+            var w = new MainWindow(ctl) { ShowActivated = false, WindowStartupLocation = WindowStartupLocation.Manual, Left = -20000, Top = 0 };
+            w.ShowSettings(settings);
+            w.Show();
+            var later = new DispatcherTimer { Interval = TimeSpan.FromMilliseconds(900) };
+            later.Tick += (s, e) =>
+            {
+                later.Stop();
+                w.MaxHeight = 4000;
+                w.UpdateLayout();
+                var root = (FrameworkElement)w.Content;
+                var rtb = new System.Windows.Media.Imaging.RenderTargetBitmap((int)Math.Ceiling(root.ActualWidth), (int)Math.Ceiling(root.ActualHeight), 96, 96, System.Windows.Media.PixelFormats.Pbgra32);
+                var bg = new System.Windows.Media.DrawingVisual();
+                using (var dc = bg.RenderOpen()) dc.DrawRectangle(new System.Windows.Media.SolidColorBrush(System.Windows.Media.Color.FromRgb(0x13, 0x15, 0x1B)), null, new Rect(0, 0, root.ActualWidth, root.ActualHeight));
+                rtb.Render(bg);
+                rtb.Render(root);
+                var enc = new System.Windows.Media.Imaging.PngBitmapEncoder();
+                enc.Frames.Add(System.Windows.Media.Imaging.BitmapFrame.Create(rtb));
+                using (var f = System.IO.File.Create(path)) enc.Save(f);
+                w.ReallyClose = true;
+                w.Close();
+                wpf.Shutdown();
+            };
+            later.Start();
+            wpf.Run();
+            return 0;
+        }
+
         public void RestartLink()
         {
             Engine.DetachLink();
             if (link != null) { link.Dispose(); link = null; }
             if (clip != null) { clip.Dispose(); clip = null; }
             LinkError = Engine.HooksOk ? null : LinkError;
-            if (string.IsNullOrEmpty(Cfg.Secret)) { LinkError = "Falta elegir la clave"; return; }
+            if (string.IsNullOrEmpty(Cfg.Secret)) { LinkError = L.T("Falta elegir la clave"); return; }
             try
             {
                 var keys = new Keys(Cfg.Secret);
@@ -180,12 +217,12 @@ namespace Cruce
             }
             catch (SocketException ex)
             {
-                LinkError = "Ningún puerto de red disponible (" + ex.SocketErrorCode + ")";
+                LinkError = L.F("Ningún puerto de red disponible ({0})", ex.SocketErrorCode);
                 Log.Error(ex, "link start");
             }
             catch (Exception ex)
             {
-                LinkError = "Error de red: " + ex.Message;
+                LinkError = L.F("Error de red: {0}", ex.Message);
                 Log.Error(ex, "link start");
             }
         }
@@ -290,7 +327,7 @@ namespace Cruce
     {
         readonly Forms.NotifyIcon ni;
         readonly Icon[] icons;
-        readonly Forms.ToolStripMenuItem status, pause;
+        readonly Forms.ToolStripMenuItem status, pause, open, quit;
         int lastState = -1;
 
         sealed class DarkColors : Forms.ProfessionalColorTable
@@ -320,14 +357,16 @@ namespace Cruce
             menu.ForeColor = Color.FromArgb(236, 238, 244);
             menu.Font = new Font("Segoe UI", 9.5f);
             menu.ShowImageMargin = false;
-            status = new Forms.ToolStripMenuItem("Buscando la otra PC…") { Enabled = false };
+            status = new Forms.ToolStripMenuItem(L.T("Buscando la otra PC…")) { Enabled = false };
             menu.Items.Add(status);
             menu.Items.Add(new Forms.ToolStripSeparator());
-            menu.Items.Add(new Forms.ToolStripMenuItem("Abrir Cruce", null, (s, e) => app.ShowWindow()) { Font = new Font("Segoe UI", 9.5f, System.Drawing.FontStyle.Bold) });
-            pause = new Forms.ToolStripMenuItem("Pausar el cruce", null, (s, e) => { app.Engine.Paused = !app.Engine.Paused; });
+            open = new Forms.ToolStripMenuItem(L.T("Abrir Cruce"), null, (s, e) => app.ShowWindow()) { Font = new Font("Segoe UI", 9.5f, System.Drawing.FontStyle.Bold) };
+            menu.Items.Add(open);
+            pause =new Forms.ToolStripMenuItem(L.T("Pausar el cruce"), null, (s, e) => { app.Engine.Paused = !app.Engine.Paused; });
             menu.Items.Add(pause);
             menu.Items.Add(new Forms.ToolStripSeparator());
-            menu.Items.Add(new Forms.ToolStripMenuItem("Salir", null, (s, e) => app.Exit()));
+            quit = new Forms.ToolStripMenuItem(L.T("Salir"), null, (s, e) => app.Exit());
+            menu.Items.Add(quit);
 
             ni = new Forms.NotifyIcon();
             ni.Icon = icons[1];
@@ -345,7 +384,9 @@ namespace Cruce
             if (ni.Text != t) ni.Text = t;
             status.Text = text;
             status.ForeColor = Color.FromArgb(144, 151, 170);
-            pause.Text = paused ? "Reanudar el cruce" : "Pausar el cruce";
+            pause.Text = L.T(paused ? "Reanudar el cruce" : "Pausar el cruce");
+            open.Text = L.T("Abrir Cruce");
+            quit.Text = L.T("Salir");
             if (state != lastState) { ni.Icon = icons[state]; lastState = state; }
         }
 

@@ -1,5 +1,7 @@
 # Builds dist\Cruce.exe with the C# compiler that ships with Windows (.NET Framework 4.8).
 # No SDK or downloads needed; the result runs on any Windows 10/11 PC as-is.
+# -Out builds somewhere else (e.g. while the installed dist\Cruce.exe is running).
+param([string]$Out = 'dist\Cruce.exe')
 $ErrorActionPreference = 'Stop'
 Set-Location $PSScriptRoot
 $fw  = "$env:WINDIR\Microsoft.NET\Framework64\v4.0.30319"
@@ -24,5 +26,5 @@ function Compile($out, $extra) {
 Compile 'build\stage.exe' @()
 & .\build\stage.exe --write-icon build\app.ico | Out-Null
 Start-Sleep -Milliseconds 300
-Compile 'dist\Cruce.exe' @('-win32icon:build\app.ico')
-Get-Item dist\Cruce.exe | Select-Object Name, Length, LastWriteTime | Format-Table -AutoSize
+Compile $Out @('-win32icon:build\app.ico')
+Get-Item $Out | Select-Object Name, Length, LastWriteTime | Format-Table -AutoSize

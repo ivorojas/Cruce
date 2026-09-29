@@ -1,4 +1,4 @@
-using System;
+﻿using System;
 using System.Collections.Generic;
 using System.Globalization;
 using System.IO;
@@ -188,7 +188,7 @@ namespace Cruce
             { "pc_ocupada", "Una de las PCs estaba al límite de CPU o suspendida: mirá la columna de procesos." },
         };
 
-        static string CauseName(string c) { string t; return CauseText.TryGetValue(c, out t) ? t : "WiFi (otro motivo)"; }
+        static string CauseName(string c) { string t; return L.T(CauseText.TryGetValue(c, out t) ? t : "WiFi (otro motivo)"); }
         static string CauseCol(string c) { string t; return CauseColor.TryGetValue(c, out t) ? t : "#f5d05b"; }
 
         static string MinuteCause(List<MinuteRow> rows)
@@ -218,7 +218,7 @@ namespace Cruce
             var basis = lagActive.Count > 0 ? lagActive : lagAll;
 
             var sb = new StringBuilder();
-            sb.Append("<!doctype html><html lang='es'><head><meta charset='utf-8'><meta name='viewport' content='width=device-width,initial-scale=1'><title>Cruce · Reporte</title><style>");
+            sb.Append("<!doctype html><html lang='" + (L.English ? "en" : "es") + "'><head><meta charset='utf-8'><meta name='viewport' content='width=device-width,initial-scale=1'><title>" + L.T("Cruce · Reporte") + "</title><style>");
             sb.Append(":root{--bg:#101218;--card:#1a1d26;--line:#2a2f3b;--tx:#eceef4;--mu:#9097aa;--ac:#5b8cff;--ok:#3ddc97}");
             sb.Append("body{margin:0;background:var(--bg);color:var(--tx);font:14px/1.5 'Segoe UI',system-ui,sans-serif}main{max-width:1180px;margin:0 auto;padding:24px 16px 48px}");
             sb.Append("h1{font-size:26px;margin:0 0 4px}h2{font-size:13px;letter-spacing:.06em;color:var(--mu);font-weight:600;margin:28px 0 10px;text-transform:uppercase}");
@@ -227,33 +227,33 @@ namespace Cruce
             sb.Append("table{width:100%;border-collapse:collapse;font-variant-numeric:tabular-nums;font-size:13px}th,td{text-align:right;padding:6px 7px;border-bottom:1px solid var(--line);white-space:nowrap}th:first-child,td:first-child{text-align:left}th{color:var(--mu);font-weight:600;font-size:11.5px}");
             sb.Append(".legend{display:flex;flex-wrap:wrap;gap:14px;color:var(--mu);font-size:12px;margin-top:8px}.sw{display:inline-block;width:10px;height:10px;border-radius:3px;margin-right:6px;vertical-align:-1px}");
             sb.Append(".scroll{overflow-x:auto}svg text{fill:var(--mu);font-size:11px}ul{margin:0;padding-left:18px}li{margin:3px 0}a{color:var(--ac)}</style></head><body><main>");
-            sb.AppendFormat("<h1>Reporte de Cruce</h1><div class='sub'>{0} · generado {1}</div>", day.ToString("dddd d 'de' MMMM yyyy", new CultureInfo("es-AR")), DateTime.Now.ToString("HH:mm"));
+            sb.AppendFormat("<h1>{2}</h1><div class='sub'>{0} · {3} {1}</div>", L.English ? day.ToString("dddd, MMMM d, yyyy", new CultureInfo("en-US")) : day.ToString("dddd d 'de' MMMM yyyy", new CultureInfo("es-AR")), DateTime.Now.ToString("HH:mm"), L.T("Reporte de Cruce"), L.T("generado"));
 
             if (total == 0)
             {
-                sb.Append("<p class='verdict'>Todavía no hay datos de este día. Las dos PCs tienen que estar conectadas: se registra un resumen por minuto.</p></main></body></html>");
+                sb.Append("<p class='verdict'>" + L.T("Todavía no hay datos de este día. Las dos PCs tienen que estar conectadas: se registra un resumen por minuto.") + "</p></main></body></html>");
                 return sb.ToString();
             }
 
-            sb.Append("<h2>Veredicto</h2><div class='verdict'>");
-            if (basis.Count == 0) sb.Append("Sin lag registrado: la conexión anduvo bien todo el día. ✓");
+            sb.Append("<h2>" + L.T("Veredicto") + "</h2><div class='verdict'>");
+            if (basis.Count == 0) sb.Append(L.T("Sin lag registrado: la conexión anduvo bien todo el día. ✓"));
             else
             {
                 var top = basis.GroupBy(m => m.Cause).OrderByDescending(g => g.Count()).First();
                 int wifiLag = basis.Count(m => m.Cause.StartsWith("wifi"));
-                sb.AppendFormat("Hubo <b>{0} minuto(s) con lag</b>{1}. ", basis.Count, lagActive.Count > 0 ? " mientras usabas Cruce" : "");
-                sb.AppendFormat("<b>{0:0}%</b> fue por el WiFi{1}. ", 100.0 * wifiLag / basis.Count, wifiPc != null ? " de " + H(wifiPc) : "");
-                sb.AppendFormat("Causa principal: <b>{0}</b> ({1:0}%).", H(CauseName(top.Key)), 100.0 * top.Count() / basis.Count);
+                sb.AppendFormat(L.T("Hubo <b>{0} minuto(s) con lag</b>{1}. "), basis.Count, lagActive.Count > 0 ? L.T(" mientras usabas Cruce") : "");
+                sb.AppendFormat(L.T("<b>{0:0}%</b> fue por el WiFi{1}. "), 100.0 * wifiLag / basis.Count, wifiPc != null ? L.F(" de {0}", H(wifiPc)) : "");
+                sb.AppendFormat(L.T("Causa principal: <b>{0}</b> ({1:0}%)."), H(CauseName(top.Key)), 100.0 * top.Count() / basis.Count);
                 var worst = basis.GroupBy(m => m.T.Hour).OrderByDescending(g => g.Count()).First();
-                sb.AppendFormat(" La peor hora fue <b>{0:00}:00–{0:00}:59</b> ({1} min con lag).", worst.Key, worst.Count());
+                sb.AppendFormat(L.T(" La peor hora fue <b>{0:00}:00–{0:00}:59</b> ({1} min con lag)."), worst.Key, worst.Count());
                 string adv;
-                if (Advice.TryGetValue(top.Key, out adv)) sb.Append("<br><br>" + H(adv));
+                if (Advice.TryGetValue(top.Key, out adv)) sb.Append("<br><br>" + H(L.T(adv)));
             }
             sb.Append("</div>");
 
             var linkRows = rows.Where(r => r.RttP95 >= 0).ToList();
-            sb.Append("<h2>Resumen</h2><div class='cards'>");
-            Action<string, string> card = (k, v) => sb.AppendFormat("<div class='card'><div class='k'>{0}</div><div class='v'>{1}</div></div>", k, v);
+            sb.Append("<h2>" + L.T("Resumen") + "</h2><div class='cards'>");
+            Action<string, string> card = (k, v) => sb.AppendFormat("<div class='card'><div class='k'>{0}</div><div class='v'>{1}</div></div>", L.T(k), v);
             card("Minutos conectadas", total.ToString());
             card("Minutos usando la otra PC", activeMin.ToString());
             card("Minutos con lag", lagAll.Count.ToString());
@@ -272,7 +272,7 @@ namespace Cruce
                 if (ch != null) card("Canal / banda", H(ch.Key));
                 card("Escaneos del WiFi", wifiRows.Where(r => r.WifiScans > 0).Sum(r => r.WifiScans).ToString());
                 var ll = wifiRows.LastOrDefault(r => r.LowLatency >= 0);
-                card("Modo baja latencia", ll == null ? "–" : ll.LowLatency == 1 ? "activo ✓" : "rechazado");
+                card("Modo baja latencia", ll == null ? "–" : L.T(ll.LowLatency == 1 ? "activo ✓" : "rechazado"));
             }
             sb.Append("</div>");
 
@@ -281,7 +281,7 @@ namespace Cruce
             int maxLag = Math.Max(1, hours.Max(g => g.Count(m => m.Cause != "ok")));
             double W = Math.Max(600, nh * 44), Hc = 220, pad = 30, padTop = 12;
             double bw = (W - pad) / nh;
-            sb.Append("<h2>Lag por hora</h2><div class='card scroll'>");
+            sb.Append("<h2>" + L.T("Lag por hora") + "</h2><div class='card scroll'>");
             sb.AppendFormat(inv, "<svg width='{0}' height='{1}' viewBox='0 {2} {0} {1}' role='img' aria-label='Minutos con lag por hora'>", W, Hc + 24 + padTop, -padTop);
             for (int gl = 0; gl <= 4; gl++)
             {
@@ -305,7 +305,7 @@ namespace Cruce
             foreach (var c in CauseOrder) sb.AppendFormat("<span><span class='sw' style='background:{0}'></span>{1}</span>", CauseCol(c), H(CauseName(c)));
             sb.Append("</div></div>");
 
-            sb.Append("<h2>Detalle por hora</h2><div class='card scroll'><table><tr><th>Hora</th><th>Conectadas</th><th>Usando</th><th>Con lag</th><th>Ida y vuelta p95</th><th>Tramo red p95</th><th>Tirones</th><th>Ping router (WiFi)</th><th>Ping internet</th><th>Señal</th><th>Reintentos WiFi</th><th>Escaneos</th><th>Vecinos</th><th>Tráfico máx</th><th>Energía</th><th>Causa principal</th></tr>");
+            sb.Append("<h2>" + L.T("Detalle por hora") + "</h2><div class='card scroll'><table><tr><th>" + L.T("Hora") + "</th><th>" + L.T("Conectadas") + "</th><th>" + L.T("Usando") + "</th><th>" + L.T("Con lag") + "</th><th>" + L.T("Ida y vuelta p95") + "</th><th>" + L.T("Tramo red p95") + "</th><th>" + L.T("Tirones") + "</th><th>" + L.T("Ping router (WiFi)") + "</th><th>" + L.T("Ping internet") + "</th><th>" + L.T("Señal") + "</th><th>" + L.T("Reintentos WiFi") + "</th><th>" + L.T("Escaneos") + "</th><th>" + L.T("Vecinos") + "</th><th>" + L.T("Tráfico máx") + "</th><th>" + L.T("Energía") + "</th><th>" + L.T("Causa principal") + "</th></tr>");
             foreach (var g in hours)
             {
                 var hr = g.SelectMany(m => m.Rows).ToList();
@@ -315,7 +315,7 @@ namespace Cruce
                 var rssi = wr.Where(r => r.RssiAvg != 0).ToList();
                 string sig = rssi.Count > 0 ? rssi.Average(r => r.RssiAvg).ToString("0", inv) + " dBm" : wr.Any(r => r.Signal >= 0) ? wr.Where(r => r.Signal >= 0).Average(r => r.Signal).ToString("0", inv) + "%" : "–";
                 var retr = wr.Where(r => r.WifiRetryPct >= 0).ToList();
-                var pw = (wr.Count > 0 ? wr : hr).Where(r => r.Power != "").GroupBy(r => (r.PowerMode ?? "").Replace('_', ' ') + " · " + r.Power + (r.Saver == 1 ? " · ahorro" : "")).OrderByDescending(x => x.Count()).FirstOrDefault();
+                var pw = (wr.Count > 0 ? wr : hr).Where(r => r.Power != "").GroupBy(r => L.T((r.PowerMode ?? "").Replace('_', ' ')) + " · " + L.T(r.Power) + (r.Saver == 1 ? " · " + L.T("ahorro") : "")).OrderByDescending(x => x.Count()).FirstOrDefault();
                 string energy = pw != null ? pw.Key : "–";
                 sb.AppendFormat(inv, "<tr><td>{0:00}:00</td><td>{1}</td><td>{2}</td><td>{3}</td><td>{4}</td><td>{5}</td><td>{6}</td><td>{7}</td><td>{8}</td><td>{9}</td><td>{10}</td><td>{11}</td><td>{12}</td><td>{13}</td><td>{15}</td><td>{14}</td></tr>",
                     g.Key, g.Count(), g.Count(m => m.Active), lagm.Count,
@@ -332,7 +332,7 @@ namespace Cruce
             var worstMin = minutes.Where(m => m.Cause != "ok").OrderByDescending(m => m.Rows.Max(r => Math.Max(r.RttP95, r.StutterMaxMs))).Take(12).OrderBy(m => m.T).ToList();
             if (worstMin.Count > 0)
             {
-                sb.Append("<h2>Los peores minutos</h2><div class='card scroll'><table><tr><th>Hora</th><th>Causa</th><th>Ida y vuelta p95</th><th>Tirón máx</th><th>Ping router</th><th>Señal</th><th>Tráfico</th><th>CPU</th><th>Procesos que más CPU usaban</th></tr>");
+                sb.Append("<h2>" + L.T("Los peores minutos") + "</h2><div class='card scroll'><table><tr><th>" + L.T("Hora") + "</th><th>" + L.T("Causa") + "</th><th>" + L.T("Ida y vuelta p95") + "</th><th>" + L.T("Tirón máx") + "</th><th>" + L.T("Ping router") + "</th><th>" + L.T("Señal") + "</th><th>" + L.T("Tráfico") + "</th><th>" + L.T("CPU") + "</th><th>" + L.T("Procesos que más CPU usaban") + "</th></tr>");
                 foreach (var m in worstMin)
                 {
                     var w = m.Rows.FirstOrDefault(r => r.OnWifi) ?? m.Rows[0];
@@ -354,7 +354,7 @@ namespace Cruce
                     var inc = new DirectoryInfo(Flight.Dir).GetFiles(day.ToString("yyyyMMdd") + "-*.txt").OrderBy(f => f.Name).ToList();
                     if (inc.Count > 0)
                     {
-                        sb.Append("<h2>Incidentes (detalle al milisegundo)</h2><div class='card'><ul>");
+                        sb.Append("<h2>" + L.T("Incidentes (detalle al milisegundo)") + "</h2><div class='card'><ul>");
                         foreach (var f in inc.Take(80))
                         {
                             var parts = Path.GetFileNameWithoutExtension(f.Name).Split('-');
@@ -367,7 +367,7 @@ namespace Cruce
             }
             catch { }
 
-            sb.Append("<p class='sub'>Cómo se decide la causa: si cuando hay lag también sube el ping de la notebook a su router o los reintentos del WiFi, el problema es el tramo WiFi; después se mira si coincidió con cortes, descargas, escaneos de Windows, señal débil o redes vecinas en tu canal. Si el WiFi está bien pero una PC estaba saturada o suspendida, es la PC. Datos crudos: metricas.csv; detalle al milisegundo: carpeta incidentes.</p>");
+            sb.Append("<p class='sub'>" + L.T("Cómo se decide la causa: si cuando hay lag también sube el ping de la notebook a su router o los reintentos del WiFi, el problema es el tramo WiFi; después se mira si coincidió con cortes, descargas, escaneos de Windows, señal débil o redes vecinas en tu canal. Si el WiFi está bien pero una PC estaba saturada o suspendida, es la PC. Datos crudos: metricas.csv; detalle al milisegundo: carpeta incidentes.") + "</p>");
             sb.Append("</main></body></html>");
             return sb.ToString();
         }

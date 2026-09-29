@@ -1,4 +1,4 @@
-using System;
+﻿using System;
 using System.Collections.Generic;
 using System.Linq;
 using System.Runtime.InteropServices;
@@ -199,7 +199,7 @@ namespace Cruce
         public static string CurrentBandStatus()
         {
             if (BandStatus != "" && BandStatus != "Buscando la red de 5 GHz…" && (DateTime.Now - bandStatusAt).TotalSeconds > 15) BandStatus = "";
-            return BandStatus;
+            return L.T(BandStatus);
         }
 
         static void MoveTo5GHz()
@@ -268,7 +268,7 @@ namespace Cruce
                 string mac = BitConverter.ToString(best).Replace('-', ':').ToLowerInvariant();
                 Log.Info("wifi: paso la notebook a 5 GHz: red '{0}', antena {1}, canal {2}, {3} dBm", net, mac, bestCh, bestRssi);
                 int r = WlanConnect(handle, ref iface, prm, IntPtr.Zero);
-                if (r != 0) { Log.Info("wifi: Windows rechazó el cambio a 5 GHz (error {0})", r); BandStatus = "Windows no dejó pasar a 5 GHz (error " + r + ")"; return; }
+                if (r != 0) { Log.Info("wifi: Windows rechazó el cambio a 5 GHz (error {0})", r); BandStatus = L.F("Windows no dejó pasar a 5 GHz (error {0})", r); return; }
             }
             finally { Marshal.FreeHGlobal(prof); Marshal.FreeHGlobal(bssids); Marshal.FreeHGlobal(prm); }
 
@@ -280,7 +280,7 @@ namespace Cruce
                 Log.Info("wifi: listo, la notebook quedó en 5 GHz (canal {0})", Channel);
                 BandStatus = "WiFi en 5 GHz ✓";
                 on24Since = DateTime.MinValue;
-                var n2 = Notify; if (n2 != null) n2("Pasé la notebook al WiFi de 5 GHz (va mucho mejor que 2,4)");
+                var n2 = Notify; if (n2 != null) n2(L.T("Pasé la notebook al WiFi de 5 GHz (va mucho mejor que 2,4)"));
             }
             else { Log.Info("wifi: pedí 5 GHz pero sigue en canal {0}; reintento más tarde", Channel); BandStatus = "Sigue en 2,4 GHz: reintento en 10 min"; }
         }

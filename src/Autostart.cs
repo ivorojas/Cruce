@@ -1,4 +1,4 @@
-using System;
+﻿using System;
 using System.Diagnostics;
 using System.IO;
 using System.Security;
@@ -81,7 +81,7 @@ namespace Cruce
                 File.WriteAllText(tmp, xml.ToString(), Encoding.Unicode);
                 int code = Run("/Create /TN \"" + TaskName + "\" /XML \"" + tmp + "\" /F", true);
                 try { File.Delete(tmp); } catch { }
-                return code == 0 ? null : "No se pudo crear la tarea de inicio (código " + code + ").";
+                return code == 0 ? null : L.F("No se pudo crear la tarea de inicio (código {0}).", code);
             }
             catch (System.ComponentModel.Win32Exception) { return "Cancelado."; }
             catch (Exception ex) { Log.Error(ex, "autostart"); return ex.Message; }
@@ -92,7 +92,7 @@ namespace Cruce
             try
             {
                 int code = Run("/Delete /TN \"" + TaskName + "\" /F", true);
-                return code == 0 ? null : "No se pudo quitar la tarea (código " + code + ").";
+                return code == 0 ? null : L.F("No se pudo quitar la tarea (código {0}).", code);
             }
             catch (System.ComponentModel.Win32Exception) { return "Cancelado."; }
             catch (Exception ex) { return ex.Message; }

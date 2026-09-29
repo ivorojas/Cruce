@@ -1,4 +1,4 @@
-using System;
+﻿using System;
 using System.Collections.Generic;
 using System.Linq;
 using System.Net;
@@ -38,6 +38,10 @@ namespace Cruce
         readonly Slider speed;
         readonly CheckBox clipSw, filesSw, autoSw;
         readonly RadioButton[] sides;
+        readonly RadioButton langEn, langEs;
+        readonly Border settingsCard;
+        readonly System.Windows.Controls.Primitives.ToggleButton settingsBtn;
+        readonly List<Tuple<object, string>> texts = new List<Tuple<object, string>>();
         readonly DispatcherTimer tick, debounce, saveLater;
         readonly List<double> hist = new List<double>();
         bool loading, autoBusy;
@@ -81,7 +85,11 @@ namespace Cruce
             speed = F<Slider>("Speed");
             clipSw = F<CheckBox>("ClipSw"); filesSw = F<CheckBox>("FilesSw"); autoSw = F<CheckBox>("AutoSw");
             sides = new[] { F<RadioButton>("SideLeft"), F<RadioButton>("SideRight"), F<RadioButton>("SideTop"), F<RadioButton>("SideBottom") };
+            langEn = F<RadioButton>("LangEn"); langEs = F<RadioButton>("LangEs");
+            settingsCard = F<Border>("SettingsCard"); settingsBtn = F<System.Windows.Controls.Primitives.ToggleButton>("SettingsBtn");
             F<Image>("Logo").Source = IconArt.Wpf(96);
+            CollectTexts(root);
+            ApplyTexts();
 
             debounce = new DispatcherTimer { Interval = TimeSpan.FromMilliseconds(700) };
             debounce.Tick += (s, e) => { debounce.Stop(); ApplyConnection(); };
@@ -166,11 +174,13 @@ namespace Cruce
             secret.Password = c.Secret;
             peerIp.Text = c.PeerIp;
             speed.Value = c.Speed;
-            speedText.Text = c.Speed.ToString("0.00") + "×";
+            speedText.Text = c.Speed.ToString("0.00", System.Globalization.CultureInfo.InvariantCulture) + "×";
             clipSw.IsChecked = c.Clipboard;
             filesSw.IsChecked = c.Files;
             filesSw.IsEnabled = c.Clipboard;
             SetSide(c.Side);
+            langEn.IsChecked = L.English; langEs.IsChecked = !L.English;
+            ShowSettings(string.IsNullOrEmpty(c.Secret));
             appliedSecret = c.Secret;
             appliedIp = c.PeerIp;
             loading = false;
@@ -203,13 +213,13 @@ namespace Cruce
                 secretPlain.Text = secret.Password;
                 secretPlain.Visibility = show ? Visibility.Visible : Visibility.Collapsed;
                 secret.Visibility = show ? Visibility.Collapsed : Visibility.Visible;
-                showSecret.Content = show ? "Ocultar" : "Ver";
+                showSecret.Content = L.T(show ? "Ocultar" : "Ver");
             };
             peerIp.TextChanged += (s, e) => { if (!loading) { debounce.Stop(); debounce.Start(); } };
             speed.ValueChanged += (s, e) =>
             {
                 double v = Math.Round(speed.Value / 0.05) * 0.05;
-                speedText.Text = v.ToString("0.00") + "×";
+                speedText.Text = v.ToString("0.00", System.Globalization.CultureInfo.InvariantCulture) + "×";
                 if (loading) return;
                 app.Cfg.Speed = v;
                 saveLater.Stop(); saveLater.Start();
@@ -221,6 +231,9 @@ namespace Cruce
             F<Button>("ReportBtn").Click += (s, e) => { try { System.Diagnostics.Process.Start(Metrics.WriteReport(DateTime.Today)); } catch (Exception ex) { Log.Error(ex, "report"); } };
             F<Button>("UpdBtn").Click += (s, e) => app.CheckUpdates(true);
             F<Button>("LogBtn").Click += (s, e) => { try { System.Diagnostics.Process.Start("notepad.exe", "\"" + Log.PathName + "\""); } catch { } };
+            langEn.Checked += (s, e) => SetLanguage(true);
+            langEs.Checked += (s, e) => SetLanguage(false);
+            settingsBtn.Click += (s, e) => ShowSettings(settingsBtn.IsChecked == true);
             for (int i = 0; i < 4; i++)
             {
                 var side = (Side)i;
@@ -236,6 +249,56 @@ namespace Cruce
                     mapSig = "";
                 };
             }
+        }
+
+        /// <summary>Remembers the Spanish source of every static text in the XAML so the language can switch live.
+        /// Named TextBlocks (and the show/hide button) are set from code on every refresh, so they are skipped.</summary>
+        void CollectTexts(object node)
+        {
+            var tb = node as TextBlock;
+            if (tb != null) { if (string.IsNullOrEmpty(tb.Name) && !string.IsNullOrEmpty(tb.Text)) texts.Add(Tuple.Create(node, tb.Text)); return; }
+            var cc = node as ContentControl;
+            if (cc != null && cc.Content is string && cc != showSecret) texts.Add(Tuple.Create(node, (string)cc.Content));
+            var d = node as DependencyObject;
+            if (d == null) return;
+            foreach (var child in LogicalTreeHelper.GetChildren(d)) CollectTexts(child);
+        }
+
+        void ApplyTexts()
+        {
+            foreach (var x in texts)
+            {
+                var tb = x.Item1 as TextBlock;
+                if (tb != null) tb.Text = L.T(x.Item2);
+                else ((ContentControl)x.Item1).Content = L.T(x.Item2);
+            }
+            showSecret.Content = L.T(secretPlain.Visibility == Visibility.Visible ? "Ocultar" : "Ver");
+        }
+
+        void SetLanguage(bool english)
+        {
+            if (loading || english == L.English) return;
+            app.Cfg.Language = english ? "en" : "es";
+            app.Cfg.Save();
+            L.Set(english);
+            Log.Info("idioma: {0}", app.Cfg.Language);
+            ApplyTexts();
+            if (adminText.Tag as string == "auto") adminText.Text = "";
+            Updater.Status = "";
+            cachedIp = null;
+            mapSig = "";
+            Refresh();
+        }
+
+        public void ShowSettings(bool show)
+        {
+            settingsBtn.IsChecked = show;
+            settingsCard.Visibility = show ? Visibility.Visible : Visibility.Collapsed;
+            Dispatcher.BeginInvoke(new Action(() =>
+            {
+                FitToScreen();
+                if (show) settingsCard.BringIntoView();
+            }), DispatcherPriority.Loaded);
         }
 
         void ApplyConnection()
@@ -267,7 +330,7 @@ namespace Cruce
                     loading = true; autoSw.IsChecked = now; loading = false;
                     autoSw.IsEnabled = true;
                     autoBusy = false;
-                    if (err != null && err != "Cancelado.") adminText.Text = err;
+                    if (err != null && err != "Cancelado.") { adminText.Text = err; adminText.Tag = null; }
                 }));
             });
         }
@@ -289,10 +352,10 @@ namespace Cruce
             string text;
             Color col;
             int trayState;
-            if (app.LinkError != null) { text = app.LinkError; col = CRed; trayState = 3; }
-            else if (e.Paused) { text = "En pausa"; col = CGray; trayState = 2; }
-            else if (connected) { text = "Conectado con " + p.Name; col = CGreen; trayState = 0; }
-            else { text = "Buscando la otra PC…"; col = CAmber; trayState = 1; }
+            if (app.LinkError != null) { text = L.T(app.LinkError); col = CRed; trayState = 3; }
+            else if (e.Paused) { text = L.T("En pausa"); col = CGray; trayState = 2; }
+            else if (connected) { text = L.F("Conectado con {0}", p.Name); col = CGreen; trayState = 0; }
+            else { text = L.T("Buscando la otra PC…"); col = CAmber; trayState = 1; }
             pillText.Text = text;
             pillDot.Fill = B(col);
             pill.Background = B(col, 0x26);
@@ -303,29 +366,29 @@ namespace Cruce
             string band = WifiNative.CurrentBandStatus();
             if (!string.IsNullOrEmpty(act)) modeText.Text = act;
             else if (!string.IsNullOrEmpty(band)) modeText.Text = band;
-            else if (!connected) modeText.Text = "Abrí Cruce en la otra PC con la misma clave";
-            else if (e.Mode == Mode.Remote) modeText.Text = "Estás usando " + p.Name;
-            else if (e.Mode == Mode.Controlled) modeText.Text = p.Name + " está usando esta PC";
-            else modeText.Text = "Estás usando esta PC";
+            else if (!connected) modeText.Text = L.T("Abrí Cruce en la otra PC con la misma clave");
+            else if (e.Mode == Mode.Remote) modeText.Text = L.F("Estás usando {0}", p.Name);
+            else if (e.Mode == Mode.Controlled) modeText.Text = L.F("{0} está usando esta PC", p.Name);
+            else modeText.Text = L.T("Estás usando esta PC");
 
             if (connected && !p.Elevated)
-                sideHint.Text = p.Name + " corre sin admin (no maneja ventanas de admin).";
-            else sideHint.Text = "Se sincroniza sola en las dos PCs.";
+                sideHint.Text = L.F("{0} corre sin admin (no maneja ventanas de admin).", p.Name);
+            else sideHint.Text = L.T("Se sincroniza sola en las dos PCs.");
 
             if (connected && st != null && st.RttMs >= 0)
             {
                 statRtt.Text = Ms(st.RttMs);
-                statRttSub.Text = "ida y vuelta";
+                statRttSub.Text = L.T("ida y vuelta");
                 statP95.Text = Ms(st.RttP95Ms);
-                statMax.Text = "máximo " + Ms(st.RttMaxMs) + " ms";
+                statMax.Text = L.F("máximo {0} ms", Ms(st.RttMaxMs));
                 statLoss.Text = st.LossPct.ToString("0.0");
                 statPps.Text = ((int)Math.Round(st.PpsOut + st.PpsIn)).ToString();
-                statQos.Text = "prioridad de voz: " + (st.Qos ? "activa" : "no disponible");
+                statQos.Text = L.F("prioridad de voz: {0}", L.T(st.Qos ? "activa" : "no disponible"));
             }
             else
             {
-                statRtt.Text = "–"; statP95.Text = "–"; statLoss.Text = "–"; statPps.Text = "–";
-                statMax.Text = "máximo –"; statQos.Text = "prioridad de voz: –";
+                statRtt.Text = "–"; statRttSub.Text = L.T("ida y vuelta"); statP95.Text = "–"; statLoss.Text = "–"; statPps.Text = "–";
+                statMax.Text = L.T("máximo –"); statQos.Text = L.T("prioridad de voz: –");
             }
 
             // one sample per 500 ms regardless of the refresh rate (slower while hidden)
@@ -351,19 +414,19 @@ namespace Cruce
             adminBtn.Visibility = admin ? Visibility.Collapsed : Visibility.Visible;
             if (string.IsNullOrEmpty(adminText.Text) || adminText.Tag as string == "auto")
             {
-                adminText.Text = admin ? "Corriendo con permisos de admin ✓" : "Sin permisos de admin: no controla ventanas de administrador en esta PC.";
+                adminText.Text = L.T(admin ? "Corriendo con permisos de admin ✓" : "Sin permisos de admin: no controla ventanas de administrador en esta PC.");
                 adminText.Tag = "auto";
             }
 
             secretHint.Text = string.IsNullOrEmpty(app.Cfg.Secret)
-                ? "Elegí una clave y poné la misma en las dos PCs."
-                : "Poné la misma clave en las dos PCs. Todo viaja cifrado con ella.";
+                ? L.T("Elegí una clave y poné la misma en las dos PCs.")
+                : L.T("Poné la misma clave en las dos PCs. Todo viaja cifrado con ella.");
 
             footer.Text = !string.IsNullOrEmpty(Updater.Status) ? Updater.Status : LocalIp() + "  ·  v" + AppController.Version;
 
             if (IsVisible)
             {
-                string sig = string.Join("|", new object[] { app.Cfg.Side, e.Mode, p != null ? p.Name + p.Session + string.Join(",", p.Mons.Select(m => m.L + ":" + m.T + ":" + m.R + ":" + m.B)) : "-", string.Join(",", e.LocalMons.Select(m => m.L + ":" + m.T + ":" + m.R + ":" + m.B)), map.ActualWidth, map.ActualHeight, app.Cfg.Name, Diag.NetLabel(), p != null ? p.NetLabel : "" });
+                string sig = string.Join("|", new object[] { app.Cfg.Side, e.Mode, p != null ? p.Name + p.Session + string.Join(",", p.Mons.Select(m => m.L + ":" + m.T + ":" + m.R + ":" + m.B)) : "-", string.Join(",", e.LocalMons.Select(m => m.L + ":" + m.T + ":" + m.R + ":" + m.B)), map.ActualWidth, map.ActualHeight, app.Cfg.Name, Diag.NetLabel(), p != null ? p.NetLabel : "", L.English });
                 if (sig != mapSig) { mapSig = sig; DrawMap(); }
             }
         }
@@ -372,7 +435,7 @@ namespace Cruce
         static DateTime ipAt;
         static string LocalIp()
         {
-            if (cachedIp != null && (DateTime.Now - ipAt).TotalSeconds < 15) return cachedIp;
+            if (cachedIp != null && (DateTime.Now - ipAt).TotalSeconds < 15) return cachedIp.Length > 0 ? cachedIp : L.T("sin red");
             try
             {
                 using (var s = new Socket(AddressFamily.InterNetwork, SocketType.Dgram, ProtocolType.Udp))
@@ -381,9 +444,9 @@ namespace Cruce
                     cachedIp = ((IPEndPoint)s.LocalEndPoint).Address.ToString();
                 }
             }
-            catch { cachedIp = "sin red"; }
+            catch { cachedIp = ""; }
             ipAt = DateTime.Now;
-            return cachedIp;
+            return cachedIp.Length > 0 ? cachedIp : L.T("sin red");
         }
 
         // ------------------------------------------------------------ map
@@ -431,8 +494,8 @@ namespace Cruce
             foreach (var m in local) Monitor(m.L * sc + tx, m.T * sc + ty, m.W * sc, m.H * sc, CAccent, hereActive && p != null, false, m, netHere);
             foreach (var m in remote) Monitor((m.L + ox) * sc + tx, (m.T + oy) * sc + ty, m.W * sc, m.H * sc, CViolet, !hereActive, !known, m, netThere);
 
-            GroupLabel(lb.Left * sc + tx, lb.Top * sc + ty, lb.Width * sc, "ESTA PC", app.Cfg.Name, CAccent);
-            GroupLabel(rb.Left * sc + tx, rb.Top * sc + ty, rb.Width * sc, known ? "OTRA PC" : "OTRA PC", known ? p.Name : "sin conectar", CViolet);
+            GroupLabel(lb.Left * sc + tx, lb.Top * sc + ty, lb.Width * sc, L.T("ESTA PC"), app.Cfg.Name, CAccent);
+            GroupLabel(rb.Left * sc + tx, rb.Top * sc + ty, rb.Width * sc, L.T("OTRA PC"), known ? p.Name : L.T("sin conectar"), CViolet);
 
             // the crossing seam
             var le = Edge.Of(local, s);
@@ -480,7 +543,7 @@ namespace Cruce
                 if (m.Dpi > 0 && m.Dpi != 96 && h > 50)
                     sp.Children.Add(new TextBlock { Text = Math.Round(m.Dpi * 100.0 / 96) + "%", Foreground = B(CGray), FontSize = 10.5, HorizontalAlignment = HorizontalAlignment.Center });
                 if (!string.IsNullOrEmpty(net) && h > 44)
-                    sp.Children.Add(new TextBlock { Text = net, Foreground = B(net.Contains("2,4") ? CAmber : CGreen), FontSize = 10.5, Margin = new Thickness(0, 2, 0, 0), HorizontalAlignment = HorizontalAlignment.Center, TextTrimming = TextTrimming.CharacterEllipsis, MaxWidth = Math.Max(20, w - 10) });
+                    sp.Children.Add(new TextBlock { Text = L.Net(net), Foreground = B(net.Contains("2,4") ? CAmber : CGreen), FontSize = 10.5, Margin = new Thickness(0, 2, 0, 0), HorizontalAlignment = HorizontalAlignment.Center, TextTrimming = TextTrimming.CharacterEllipsis, MaxWidth = Math.Max(20, w - 10) });
                 border.Child = sp;
             }
             if (active) border.Effect = new DropShadowEffect { Color = c, BlurRadius = 26, ShadowDepth = 0, Opacity = 0.55 };

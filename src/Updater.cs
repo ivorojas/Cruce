@@ -1,4 +1,4 @@
-using System;
+﻿using System;
 using System.Diagnostics;
 using System.IO;
 using System.Net;
@@ -32,7 +32,7 @@ namespace Cruce
             {
                 try
                 {
-                    Status = "Buscando actualizaciones…";
+                    Status = L.T("Buscando actualizaciones…");
                     ServicePointManager.SecurityProtocol |= SecurityProtocolType.Tls12;
                     string json;
                     using (var wc = new WebClient())
@@ -44,11 +44,11 @@ namespace Cruce
                     var url = Regex.Match(json, "\"browser_download_url\"\\s*:\\s*\"([^\"]+/Cruce\\.exe)\"").Groups[1].Value;
                     var latest = Parse(tag);
                     var current = Parse(AppController.Version);
-                    if (latest <= current || url.Length == 0) { Status = "Estás en la última versión (" + AppController.Version + ")"; return; }
+                    if (latest <= current || url.Length == 0) { Status = L.F("Estás en la última versión ({0})", AppController.Version); return; }
                     Log.Info("actualización disponible: {0} (tengo {1})", tag, AppController.Version);
-                    if (!install) { Status = "Hay una versión nueva: " + tag; return; }
+                    if (!install) { Status = L.F("Hay una versión nueva: {0}", tag); return; }
 
-                    Status = "Descargando " + tag + "…";
+                    Status = L.F("Descargando {0}…", tag);
                     string exe = Process.GetCurrentProcess().MainModule.FileName;
                     string tmp = Path.Combine(Path.GetTempPath(), "Cruce-" + tag + ".exe");
                     using (var wc = new WebClient())
@@ -60,9 +60,9 @@ namespace Cruce
                     using (var f = File.OpenRead(tmp)) f.Read(head, 0, 2);
                     if (new FileInfo(tmp).Length < 50000 || head[0] != 'M' || head[1] != 'Z') throw new InvalidDataException("descarga inválida");
 
-                    while (!canInstall()) { Status = "Actualización lista: se instala cuando vuelvas a esta PC"; Thread.Sleep(2000); }
+                    while (!canInstall()) { Status = L.T("Actualización lista: se instala cuando vuelvas a esta PC"); Thread.Sleep(2000); }
 
-                    Status = "Instalando " + tag + "…";
+                    Status = L.F("Instalando {0}…", tag);
                     Log.Info("instalando {0} sobre {1}", tag, exe);
                     string cmd = Path.Combine(Path.GetTempPath(), "cruce-update.cmd");
                     File.WriteAllText(cmd,
@@ -79,10 +79,10 @@ namespace Cruce
                 catch (WebException ex)
                 {
                     var r = ex.Response as HttpWebResponse;
-                    Status = r != null && r.StatusCode == HttpStatusCode.NotFound ? "No se encontró el repositorio (¿es privado?)" : "Sin conexión a GitHub";
+                    Status = r != null && r.StatusCode == HttpStatusCode.NotFound ? L.T("No se encontró el repositorio (¿es privado?)") : L.T("Sin conexión a GitHub");
                     Log.Info("update check failed: {0}", ex.Message);
                 }
-                catch (Exception ex) { Status = "Error al actualizar: " + ex.Message; Log.Error(ex, "update"); }
+                catch (Exception ex) { Status = L.F("Error al actualizar: {0}", ex.Message); Log.Error(ex, "update"); }
                 finally { Interlocked.Exchange(ref busy, 0); }
             });
         }

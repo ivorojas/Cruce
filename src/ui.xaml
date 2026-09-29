@@ -168,6 +168,30 @@
       </Setter>
     </Style>
 
+    <Style x:Key="ToggleBtn" TargetType="ToggleButton">
+      <Setter Property="Foreground" Value="{StaticResource Text}"/>
+      <Setter Property="FontSize" Value="12.5"/>
+      <Setter Property="Cursor" Value="Hand"/>
+      <Setter Property="Template">
+        <Setter.Value>
+          <ControlTemplate TargetType="ToggleButton">
+            <Border x:Name="b" Background="#262B37" BorderBrush="#383F4F" BorderThickness="1" CornerRadius="8" Padding="12,6">
+              <ContentPresenter HorizontalAlignment="Center" VerticalAlignment="Center"/>
+            </Border>
+            <ControlTemplate.Triggers>
+              <Trigger Property="IsMouseOver" Value="True">
+                <Setter TargetName="b" Property="Background" Value="#303647"/>
+              </Trigger>
+              <Trigger Property="IsChecked" Value="True">
+                <Setter TargetName="b" Property="Background" Value="#2E5B8CFF"/>
+                <Setter TargetName="b" Property="BorderBrush" Value="{StaticResource Accent}"/>
+              </Trigger>
+            </ControlTemplate.Triggers>
+          </ControlTemplate>
+        </Setter.Value>
+      </Setter>
+    </Style>
+
     <Style x:Key="FillRepeat" TargetType="RepeatButton">
       <Setter Property="Focusable" Value="False"/>
       <Setter Property="Template">
@@ -363,7 +387,20 @@
     </Grid>
 
     <!-- Settings -->
-    <Border Grid.Row="4" Style="{StaticResource Card}" Margin="0,12,0,0">
+    <Border x:Name="SettingsCard" Grid.Row="4" Style="{StaticResource Card}" Margin="0,12,0,0" Visibility="Collapsed">
+      <DockPanel>
+      <DockPanel DockPanel.Dock="Top" Margin="0,0,0,12">
+        <TextBlock Text="AJUSTES" Style="{StaticResource Section}" VerticalAlignment="Center"/>
+        <StackPanel Orientation="Horizontal" HorizontalAlignment="Right">
+          <TextBlock Text="Idioma" Foreground="{StaticResource Muted}" FontSize="12.5" VerticalAlignment="Center" Margin="0,0,10,0"/>
+          <Border Background="#E6141720" BorderBrush="#26FFFFFF" BorderThickness="1" CornerRadius="10" Padding="2">
+            <StackPanel Orientation="Horizontal">
+              <RadioButton x:Name="LangEn" GroupName="lang" Style="{StaticResource Seg}" Content="English"/>
+              <RadioButton x:Name="LangEs" GroupName="lang" Style="{StaticResource Seg}" Content="Español"/>
+            </StackPanel>
+          </Border>
+        </StackPanel>
+      </DockPanel>
       <Grid>
         <Grid.ColumnDefinitions>
           <ColumnDefinition Width="*"/>
@@ -371,7 +408,6 @@
           <ColumnDefinition Width="*"/>
         </Grid.ColumnDefinitions>
         <StackPanel>
-          <TextBlock Text="AJUSTES" Style="{StaticResource Section}" Margin="0,0,0,12"/>
           <TextBlock Text="Clave compartida" Style="{StaticResource Label}"/>
           <Grid>
             <Grid.ColumnDefinitions>
@@ -388,7 +424,7 @@
           <TextBlock Text="Dejalo vacío: se encuentran solas en tu red." Style="{StaticResource Hint}"/>
         </StackPanel>
         <StackPanel Grid.Column="2">
-          <DockPanel Margin="0,27,0,0">
+          <DockPanel>
             <TextBlock Text="Velocidad del puntero en la otra PC" Style="{StaticResource Label}"/>
             <TextBlock x:Name="SpeedText" HorizontalAlignment="Right" Foreground="{StaticResource Muted}" FontSize="13" Text="1.00×"/>
           </DockPanel>
@@ -403,6 +439,7 @@
           </DockPanel>
         </StackPanel>
       </Grid>
+      </DockPanel>
     </Border>
 
     <!-- Footer -->
@@ -411,10 +448,16 @@
         <TextBlock Text="Ctrl + Alt + F12" Foreground="{StaticResource Text}" FontSize="11.5" FontFamily="Cascadia Mono, Consolas"/>
       </Border>
       <TextBlock DockPanel.Dock="Left" Text="cambia de PC" Foreground="{StaticResource Muted}" FontSize="12" Margin="8,0,0,0" VerticalAlignment="Center"/>
+      <ToggleButton x:Name="SettingsBtn" DockPanel.Dock="Right" Style="{StaticResource ToggleBtn}" Margin="8,0,0,0">
+        <StackPanel Orientation="Horizontal">
+          <TextBlock Text="&#xE713;" FontFamily="Segoe Fluent Icons, Segoe MDL2 Assets" FontSize="13" VerticalAlignment="Center" Margin="0,0,7,0"/>
+          <TextBlock Text="Ajustes" VerticalAlignment="Center"/>
+        </StackPanel>
+      </ToggleButton>
       <Button x:Name="ReportBtn" DockPanel.Dock="Right" Style="{StaticResource Btn}" Content="Reporte" Margin="8,0,0,0"/>
       <Button x:Name="LogBtn" DockPanel.Dock="Right" Style="{StaticResource Btn}" Content="Abrir registro" Margin="8,0,0,0"/>
       <Button x:Name="UpdBtn" DockPanel.Dock="Right" Style="{StaticResource Btn}" Content="Buscar actualizaciones" Margin="12,0,0,0"/>
-      <TextBlock x:Name="Footer" HorizontalAlignment="Right" Foreground="{StaticResource Faint}" FontSize="11.5" VerticalAlignment="Center"/>
+      <TextBlock x:Name="Footer" HorizontalAlignment="Right" Foreground="{StaticResource Faint}" FontSize="11.5" VerticalAlignment="Center" TextTrimming="CharacterEllipsis"/>
     </DockPanel>
   </Grid>
 </ScrollViewer>

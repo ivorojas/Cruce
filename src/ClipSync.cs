@@ -1,4 +1,4 @@
-using System;
+﻿using System;
 using System.Collections.Generic;
 using System.Collections.Specialized;
 using System.IO;
@@ -293,7 +293,7 @@ namespace Cruce
                 }
             }
             long total = items.Where(i => i.Item3 > 0).Sum(i => i.Item3);
-            if (kind == K_FILES && total > MaxFilesBytes) { Say("Archivos demasiado grandes para el portapapeles (más de 2 GB): arrastralos a la otra pantalla."); return; }
+            if (kind == K_FILES && total > MaxFilesBytes) { Say(L.T("Archivos demasiado grandes para el portapapeles (más de 2 GB): arrastralos a la otra pantalla.")); return; }
 
             var w = new WBuf(1024);
             if (kind == K_DROP) w.U32(dropId);
@@ -315,7 +315,7 @@ namespace Cruce
                     {
                         WriteFrame(s, K_CHUNK, buf, 0, n);
                         sent += n;
-                        Activity = string.Format("Enviando archivos… {0:0}%", 100.0 * sent / Math.Max(1, total));
+                        Activity = L.F("Enviando archivos… {0:0}%", 100.0 * sent / Math.Max(1, total));
                     }
                 }
             }
@@ -442,7 +442,7 @@ namespace Cruce
 
             var dir = Path.Combine(Path.GetTempPath(), "Cruce", DateTime.Now.ToString("yyyyMMdd-HHmmss-fff"));
             Directory.CreateDirectory(dir);
-            if (total > 20 << 20) Say("Recibiendo archivos de la otra PC…");
+            if (total > 20 << 20) Say(L.T("Recibiendo archivos de la otra PC…"));
             long got = 0;
             byte[] pending = null;
             int pendingOff = 0;
@@ -465,7 +465,7 @@ namespace Cruce
                         int n = (int)Math.Min(left, pending.Length - pendingOff);
                         fs.Write(pending, pendingOff, n);
                         pendingOff += n; left -= n; got += n;
-                        Activity = string.Format("Recibiendo archivos… {0:0}%", 100.0 * got / Math.Max(1, total));
+                        Activity = L.F("Recibiendo archivos… {0:0}%", 100.0 * got / Math.Max(1, total));
                     }
                 }
             }
@@ -479,7 +479,7 @@ namespace Cruce
                 if (File.Exists(p) || Directory.Exists(p)) list.Add(p);
             }
             ui.BeginInvoke(new Action(() => SetClip(() => Clipboard.SetFileDropList(list))));
-            if (total > 20 << 20) Say("Archivos listos: pegalos con Ctrl+V");
+            if (total > 20 << 20) Say(L.T("Archivos listos: pegalos con Ctrl+V"));
             return dir;
         }
 
@@ -533,8 +533,8 @@ namespace Cruce
                 return Path.Combine(spot.Folder, mapped, rest);
             };
 
-            string label = roots.Count == 1 ? roots[0] : roots.Count + " elementos";
-            string where = spot.Kind == "escritorio" ? "el escritorio" : spot.Kind == "descargas" ? "Descargas" : Path.GetFileName(spot.Folder.TrimEnd('\\'));
+            string label = roots.Count == 1 ? roots[0] : L.F("{0} elementos", roots.Count);
+            string where = spot.Kind == "escritorio" ? L.T("el escritorio") : spot.Kind == "descargas" ? L.T("Descargas") : Path.GetFileName(spot.Folder.TrimEnd('\\'));
             Log.Info("arrastre recibido: {0} ({1}) → {2} [{3}]", label, DropUi.Size(total), spot.Folder, spot.Kind);
             var created = new List<string>();
             var sw = System.Diagnostics.Stopwatch.StartNew();
@@ -543,7 +543,7 @@ namespace Cruce
             int pendingOff = 0;
             try
             {
-                DropUi.Progress(id, spot.X, spot.Y, "Recibiendo " + label, "0% · " + DropUi.Size(total), 0, 0);
+                DropUi.Progress(id, spot.X, spot.Y, L.F("Recibiendo {0}", label), "0% · " + DropUi.Size(total), 0, 0);
                 foreach (var it in items)
                 {
                     var full = dest(it.Item1);
@@ -571,8 +571,8 @@ namespace Cruce
                                 lastUi = ms;
                                 double speed = got / Math.Max(0.001, ms / 1000.0);
                                 double eta = (total - got) / Math.Max(1, speed);
-                                DropUi.Progress(id, spot.X, spot.Y, "Recibiendo " + label,
-                                    string.Format("{0:0}% · {1} de {2} · {3}/s · faltan {4:0} s", 100.0 * got / Math.Max(1, total), DropUi.Size(got), DropUi.Size(total), DropUi.Size((long)speed), eta),
+                                DropUi.Progress(id, spot.X, spot.Y, L.F("Recibiendo {0}", label),
+                                    L.F("{0:0}% · {1} de {2} · {3}/s · faltan {4:0} s", 100.0 * got / Math.Max(1, total), DropUi.Size(got), DropUi.Size(total), DropUi.Size((long)speed), eta),
                                     (double)got / Math.Max(1, total), 0);
                             }
                         }
@@ -583,14 +583,14 @@ namespace Cruce
                 }
                 var end = ReadFrame(s);
                 if (end == null || end[0] != K_END) throw new IOException("transferencia incompleta");
-                DropUi.Progress(id, spot.X, spot.Y, "Listo ✓  " + label, "en " + where + " · " + DropUi.Size(total) + " en " + (sw.ElapsedMilliseconds / 1000.0).ToString("0.0") + " s", 1, 1);
+                DropUi.Progress(id, spot.X, spot.Y, L.F("Listo ✓  {0}", label), L.F("en {0} · {1} en {2} s", where, DropUi.Size(total), (sw.ElapsedMilliseconds / 1000.0).ToString("0.0")), 1, 1);
                 Log.Info("arrastre completo: {0} en {1:0.0} s", DropUi.Size(total), sw.ElapsedMilliseconds / 1000.0);
             }
             catch (Exception ex)
             {
                 Log.Info("ARRASTRE: falló la recepción: {0}", ex.Message);
                 foreach (var p in created.Where(p => p.EndsWith(".cruce-parcial"))) try { File.Delete(p); } catch { }
-                DropUi.Progress(id, spot.X, spot.Y, "No se pudo copiar " + label, ex.Message, (double)got / Math.Max(1, total), 2);
+                DropUi.Progress(id, spot.X, spot.Y, L.F("No se pudo copiar {0}", label), ex.Message, (double)got / Math.Max(1, total), 2);
             }
         }
 
