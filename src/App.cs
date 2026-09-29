@@ -79,7 +79,7 @@ namespace Cruce
 
     public sealed class AppController
     {
-        public const string Version = "1.12";
+        public const string Version = "1.13";
 
         readonly Application app;
         public readonly Config Cfg;
@@ -116,6 +116,8 @@ namespace Cruce
             if (!Engine.HooksOk) LinkError = "No se pudo capturar el mouse/teclado";
             Diag.Start();
             Diag.LogStartup(Cfg, IsElevated);
+            WifiNative.CurrentMode = () => Engine.Mode;
+            WifiNative.Notify += Notify;
             WifiNative.Start();
             StartWatchers();
             RestartLink();

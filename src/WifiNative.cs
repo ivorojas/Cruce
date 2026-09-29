@@ -24,6 +24,8 @@ namespace Cruce
         [DllImport("wlanapi.dll")] static extern int WlanSetInterface(IntPtr h, ref Guid g, int op, int size, IntPtr data, IntPtr res);
         [DllImport("wlanapi.dll")] static extern int WlanGetNetworkBssList(IntPtr h, ref Guid g, IntPtr ssid, int bssType, bool secure, IntPtr res, out IntPtr list);
         [DllImport("wlanapi.dll")] static extern void WlanFreeMemory(IntPtr p);
+        [DllImport("wlanapi.dll")] static extern int WlanScan(IntPtr h, ref Guid g, IntPtr ssid, IntPtr ie, IntPtr res);
+        [DllImport("wlanapi.dll")] static extern int WlanConnect(IntPtr h, ref Guid g, IntPtr parameters, IntPtr res);
         delegate void NotifyCb(IntPtr data, IntPtr ctx);
         [DllImport("wlanapi.dll")] static extern int WlanRegisterNotification(IntPtr h, uint src, bool ignoreDup, NotifyCb cb, IntPtr ctx, IntPtr res, out uint prev);
 
@@ -136,6 +138,7 @@ namespace Cruce
             else Connected = false;
             int v;
             if (QueryInt(OP_CHANNEL, out v)) Channel = v;
+            CheckBand();
             if (QueryInt(OP_RSSI, out v)) { Rssi = v; lock (gate) rssiSamples.Add(v); Flight.Add(Flight.K_WIFI, v, Quality); }
 
             // Driver frame counters (not every driver supports them)
@@ -156,6 +159,117 @@ namespace Cruce
                 }
                 finally { WlanFreeMemory(data); }
             }
+        }
+
+        // ------------------------------------------------------------ keep the laptop on 5 GHz
+        //
+        // With one network name for both bands, the router picks the band at every (re)connection and
+        // sometimes drops the laptop on congested 2.4 GHz. The band can't be pinned in this laptop's
+        // driver, so Cruce does it: if it's on 2.4 GHz and the same network is visible on 5 GHz with a
+        // usable signal, it reconnects to that 5 GHz access point (1-2 s blip). Only while not crossing,
+        // at most 3 tries per hour, 10 min apart; every step is logged.
+
+        public static Func<Mode> CurrentMode;
+        public static bool Prefer5GHz = true;
+        public static event Action<string> Notify;
+        static DateTime on24Since = DateTime.MinValue, lastAttempt = DateTime.MinValue, hourStart = DateTime.MinValue;
+        static int attemptsThisHour;
+
+        static void CheckBand()
+        {
+            if (!Prefer5GHz || !Connected || Channel <= 0) { on24Since = DateTime.MinValue; return; }
+            if (Channel > 14) { on24Since = DateTime.MinValue; return; }
+            var now = DateTime.Now;
+            if (on24Since == DateTime.MinValue) { on24Since = now; Log.Info("wifi: la notebook quedó en 2,4 GHz (canal {0}); si sigue así en 20 s la paso a 5 GHz", Channel); return; }
+            if ((now - on24Since).TotalSeconds < 20) return;
+            if (CurrentMode != null && CurrentMode() != Mode.Local) return;          // never mid-crossing
+            if ((now - lastAttempt).TotalMinutes < 10) return;
+            if ((now - hourStart).TotalMinutes >= 60) { hourStart = now; attemptsThisHour = 0; }
+            if (attemptsThisHour >= 3) return;
+            attemptsThisHour++;
+            lastAttempt = now;
+            try { MoveTo5GHz(); } catch (Exception ex) { Log.Info("wifi: no pude pasar a 5 GHz ({0})", ex.Message); }
+        }
+
+        static void MoveTo5GHz()
+        {
+            // Current profile name and SSID (WLAN_CONNECTION_ATTRIBUTES)
+            int size; IntPtr data;
+            if (WlanQueryInterface(handle, ref iface, OP_CONNECTION, IntPtr.Zero, out size, out data, IntPtr.Zero) != 0) return;
+            string profile; byte[] ssid;
+            try
+            {
+                profile = Marshal.PtrToStringUni(data + 8);
+                int len = Math.Min(32, Marshal.ReadInt32(data, 520));
+                ssid = new byte[len];
+                Marshal.Copy(data + 524, ssid, 0, len);
+            }
+            finally { WlanFreeMemory(data); }
+            if (string.IsNullOrEmpty(profile) || ssid.Length == 0) return;
+
+            // Fresh scan (background scanning is off in low-latency mode), then look for our SSID on 5 GHz.
+            WlanScan(handle, ref iface, IntPtr.Zero, IntPtr.Zero, IntPtr.Zero);
+            System.Threading.Thread.Sleep(4000);
+            IntPtr list;
+            if (WlanGetNetworkBssList(handle, ref iface, IntPtr.Zero, 3, false, IntPtr.Zero, out list) != 0) return;
+            byte[] best = null; int bestRssi = -999, bestCh = 0, seen24 = 0;
+            try
+            {
+                int n = Marshal.ReadInt32(list, 4);
+                for (int i = 0; i < n; i++)
+                {
+                    IntPtr e = list + 8 + i * 360;
+                    int l = Marshal.ReadInt32(e, 0);
+                    if (l != ssid.Length) continue;
+                    var s = new byte[l];
+                    Marshal.Copy(e + 4, s, 0, l);
+                    if (!s.SequenceEqual(ssid)) continue;
+                    int rssi = Marshal.ReadInt32(e, 56), mhz = Marshal.ReadInt32(e, 92) / 1000;
+                    if (mhz < 5000) { seen24++; continue; }
+                    if (rssi > bestRssi) { bestRssi = rssi; bestCh = FreqToChannel(mhz); best = new byte[6]; Marshal.Copy(e + 40, best, 0, 6); }
+                }
+            }
+            finally { WlanFreeMemory(list); }
+            string net = System.Text.Encoding.UTF8.GetString(ssid);
+            if (best == null) { Log.Info("wifi: no veo la red '{0}' en 5 GHz desde acá (solo {1} antena/s de 2,4 GHz); me quedo en 2,4", net, seen24); return; }
+            if (bestRssi < -78) { Log.Info("wifi: la red '{0}' en 5 GHz llega muy débil ({1} dBm); me quedo en 2,4", net, bestRssi); return; }
+
+            // WlanConnect to the same profile, restricted to that 5 GHz access point.
+            int ps = IntPtr.Size;
+            IntPtr prof = Marshal.StringToHGlobalUni(profile), bssids = Marshal.AllocHGlobal(20), prm = Marshal.AllocHGlobal(4 * ps + 8);
+            try
+            {
+                for (int i = 0; i < 20; i++) Marshal.WriteByte(bssids, i, 0);
+                Marshal.WriteByte(bssids, 0, 0x80);        // NDIS_OBJECT_TYPE_DEFAULT
+                Marshal.WriteByte(bssids, 1, 1);           // DOT11_BSSID_LIST_REVISION_1
+                Marshal.WriteInt16(bssids, 2, 20);         // size
+                Marshal.WriteInt32(bssids, 4, 1);          // uNumOfEntries
+                Marshal.WriteInt32(bssids, 8, 1);          // uTotalNumOfEntries
+                Marshal.Copy(best, 0, bssids + 12, 6);
+                for (int i = 0; i < 4 * ps + 8; i++) Marshal.WriteByte(prm, i, 0);
+                Marshal.WriteInt32(prm, 0, 0);             // wlan_connection_mode_profile
+                Marshal.WriteIntPtr(prm, ps, prof);
+                Marshal.WriteIntPtr(prm, 2 * ps, IntPtr.Zero);
+                Marshal.WriteIntPtr(prm, 3 * ps, bssids);
+                Marshal.WriteInt32(prm, 4 * ps, 1);        // dot11_BSS_type_infrastructure
+                Marshal.WriteInt32(prm, 4 * ps + 4, 0);
+                string mac = BitConverter.ToString(best).Replace('-', ':').ToLowerInvariant();
+                Log.Info("wifi: paso la notebook a 5 GHz: red '{0}', antena {1}, canal {2}, {3} dBm", net, mac, bestCh, bestRssi);
+                int r = WlanConnect(handle, ref iface, prm, IntPtr.Zero);
+                if (r != 0) { Log.Info("wifi: Windows rechazó el cambio a 5 GHz (error {0})", r); return; }
+            }
+            finally { Marshal.FreeHGlobal(prof); Marshal.FreeHGlobal(bssids); Marshal.FreeHGlobal(prm); }
+
+            System.Threading.Thread.Sleep(8000);
+            int ch;
+            if (QueryInt(OP_CHANNEL, out ch)) Channel = ch;
+            if (Channel > 14)
+            {
+                Log.Info("wifi: listo, la notebook quedó en 5 GHz (canal {0})", Channel);
+                on24Since = DateTime.MinValue;
+                var n2 = Notify; if (n2 != null) n2("Pasé la notebook al WiFi de 5 GHz (va mucho mejor que 2,4)");
+            }
+            else Log.Info("wifi: pedí 5 GHz pero sigue en canal {0}; reintento más tarde", Channel);
         }
 
         /// <summary>Per-minute Wi-Fi driver stats; resets counters.</summary>
