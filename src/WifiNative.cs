@@ -180,15 +180,26 @@ namespace Cruce
             if (!Prefer5GHz || !Connected || Channel <= 0) { on24Since = DateTime.MinValue; return; }
             if (Channel > 14) { on24Since = DateTime.MinValue; return; }
             var now = DateTime.Now;
-            if (on24Since == DateTime.MinValue) { on24Since = now; Log.Info("wifi: la notebook quedó en 2,4 GHz (canal {0}); si sigue así en 20 s la paso a 5 GHz", Channel); return; }
-            if ((now - on24Since).TotalSeconds < 20) return;
+            if (on24Since == DateTime.MinValue) { on24Since = now; Log.Info("wifi: la notebook está en 2,4 GHz (canal {0}); la paso a 5 GHz", Channel); }
             if (CurrentMode != null && CurrentMode() != Mode.Local) return;          // never mid-crossing
             if ((now - lastAttempt).TotalMinutes < 10) return;
             if ((now - hourStart).TotalMinutes >= 60) { hourStart = now; attemptsThisHour = 0; }
             if (attemptsThisHour >= 3) return;
             attemptsThisHour++;
             lastAttempt = now;
+            BandStatus = "Buscando la red de 5 GHz…";
             try { MoveTo5GHz(); } catch (Exception ex) { Log.Info("wifi: no pude pasar a 5 GHz ({0})", ex.Message); }
+            if (BandStatus == "Buscando la red de 5 GHz…") BandStatus = "";
+            bandStatusAt = DateTime.Now;
+        }
+
+        /// <summary>Short user-facing state of the 5 GHz keeper (shown in the window); clears itself after a while.</summary>
+        public static volatile string BandStatus = "";
+        static DateTime bandStatusAt;
+        public static string CurrentBandStatus()
+        {
+            if (BandStatus != "" && BandStatus != "Buscando la red de 5 GHz…" && (DateTime.Now - bandStatusAt).TotalSeconds > 15) BandStatus = "";
+            return BandStatus;
         }
 
         static void MoveTo5GHz()
@@ -231,8 +242,9 @@ namespace Cruce
             }
             finally { WlanFreeMemory(list); }
             string net = System.Text.Encoding.UTF8.GetString(ssid);
-            if (best == null) { Log.Info("wifi: no veo la red '{0}' en 5 GHz desde acá (solo {1} antena/s de 2,4 GHz); me quedo en 2,4", net, seen24); return; }
-            if (bestRssi < -78) { Log.Info("wifi: la red '{0}' en 5 GHz llega muy débil ({1} dBm); me quedo en 2,4", net, bestRssi); return; }
+            if (best == null) { Log.Info("wifi: no veo la red '{0}' en 5 GHz desde acá (solo {1} antena/s de 2,4 GHz); me quedo en 2,4", net, seen24); BandStatus = "No encuentro la red de 5 GHz: sigo en 2,4"; return; }
+            if (bestRssi < -78) { Log.Info("wifi: la red '{0}' en 5 GHz llega muy débil ({1} dBm); me quedo en 2,4", net, bestRssi); BandStatus = "La red de 5 GHz llega muy débil: sigo en 2,4"; return; }
+            BandStatus = "Pasando el WiFi a 5 GHz…";
 
             // WlanConnect to the same profile, restricted to that 5 GHz access point.
             int ps = IntPtr.Size;
@@ -256,7 +268,7 @@ namespace Cruce
                 string mac = BitConverter.ToString(best).Replace('-', ':').ToLowerInvariant();
                 Log.Info("wifi: paso la notebook a 5 GHz: red '{0}', antena {1}, canal {2}, {3} dBm", net, mac, bestCh, bestRssi);
                 int r = WlanConnect(handle, ref iface, prm, IntPtr.Zero);
-                if (r != 0) { Log.Info("wifi: Windows rechazó el cambio a 5 GHz (error {0})", r); return; }
+                if (r != 0) { Log.Info("wifi: Windows rechazó el cambio a 5 GHz (error {0})", r); BandStatus = "Windows no dejó pasar a 5 GHz (error " + r + ")"; return; }
             }
             finally { Marshal.FreeHGlobal(prof); Marshal.FreeHGlobal(bssids); Marshal.FreeHGlobal(prm); }
 
@@ -266,10 +278,11 @@ namespace Cruce
             if (Channel > 14)
             {
                 Log.Info("wifi: listo, la notebook quedó en 5 GHz (canal {0})", Channel);
+                BandStatus = "WiFi en 5 GHz ✓";
                 on24Since = DateTime.MinValue;
                 var n2 = Notify; if (n2 != null) n2("Pasé la notebook al WiFi de 5 GHz (va mucho mejor que 2,4)");
             }
-            else Log.Info("wifi: pedí 5 GHz pero sigue en canal {0}; reintento más tarde", Channel);
+            else { Log.Info("wifi: pedí 5 GHz pero sigue en canal {0}; reintento más tarde", Channel); BandStatus = "Sigue en 2,4 GHz: reintento en 10 min"; }
         }
 
         /// <summary>Per-minute Wi-Fi driver stats; resets counters.</summary>

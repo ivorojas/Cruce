@@ -300,7 +300,9 @@ namespace Cruce
             app.UpdateTray(text, trayState);
 
             string act = app.Clip != null ? app.Clip.Activity : "";
+            string band = WifiNative.CurrentBandStatus();
             if (!string.IsNullOrEmpty(act)) modeText.Text = act;
+            else if (!string.IsNullOrEmpty(band)) modeText.Text = band;
             else if (!connected) modeText.Text = "Abrí Cruce en la otra PC con la misma clave";
             else if (e.Mode == Mode.Remote) modeText.Text = "Estás usando " + p.Name;
             else if (e.Mode == Mode.Controlled) modeText.Text = p.Name + " está usando esta PC";
