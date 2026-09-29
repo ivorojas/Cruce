@@ -23,7 +23,51 @@ namespace Cruce
     /// </summary>
     public sealed class ClipSync : IDisposable
     {
-        const byte K_TEXT = 10, K_IMAGE = 11, K_FILES = 12, K_CHUNK = 13, K_END = 14, K_DROP = 15;
+        const byte K_TEXT = 10, K_IMAGE = 11, K_FILES = 12, K_CHUNK = 13, K_END = 14, K_DROP = 15, K_PASTE = 16;
+
+        /// <summary>Tests only: log pastes instead of touching this PC's clipboard and keyboard.</summary>
+        public static bool TestNoInject;
+        public static Action<string> TestPasted;
+
+        /// <summary>
+        /// "Paste this text over there": another app on this PC (e.g. Dictalo) pasted while you were
+        /// driving the other PC. The text and the paste travel in one message, so the other PC never
+        /// pastes a stale clipboard.
+        /// </summary>
+        public void SendPaste(string text)
+        {
+            var addr = peerAddr();
+            if (addr == null || string.IsNullOrEmpty(text)) return;
+            var bytes = Encoding.UTF8.GetBytes(text);
+            Send(addr, s => WriteFrame(s, K_PASTE, bytes, 0, bytes.Length), CancellationToken.None, "pegado remoto");
+        }
+
+        void PasteHere(string text)
+        {
+            if (TestNoInject) { var t = TestPasted; if (t != null) t(text); return; }
+            ui.BeginInvoke(new Action(() =>
+            {
+                bool ok = false;
+                for (int i = 0; i < 8 && !ok; i++)
+                {
+                    try { Clipboard.SetDataObject(text, true); ignoreSeq = Native.GetClipboardSequenceNumber(); ok = true; }
+                    catch { Thread.Sleep(40); }
+                }
+                if (!ok) { Log.Info("pegado remoto: no pude escribir el portapapeles"); return; }
+                ThreadPool.QueueUserWorkItem(_ =>
+                {
+                    Thread.Sleep(40);
+                    Inject.Key(0xA2, 0x1D, false, false);   // Ctrl (real scan codes: Chromium/Electron need them)
+                    Thread.Sleep(25);
+                    Inject.Key(0x56, 0x2F, false, false);   // V
+                    Thread.Sleep(25);
+                    Inject.Key(0x56, 0x2F, false, true);
+                    Thread.Sleep(25);
+                    Inject.Key(0xA2, 0x1D, false, true);
+                    Log.Info("pegado remoto: {0} caracteres pegados acá", text.Length);
+                });
+            }));
+        }
         public const long MaxFilesBytes = 2L << 30; // 2 GB per copy
         const int Chunk = 1 << 20;
 
@@ -313,7 +357,7 @@ namespace Cruce
                     var s = c.GetStream();
                     var first = ReadFrame(s);
                     if (first == null || first.Length == 0) return;
-                    Log.Info("portapapeles recibido: tipo {0}, {1} bytes", first[0] == K_TEXT ? "texto" : first[0] == K_IMAGE ? "imagen" : "archivos", first.Length - 1);
+                    Log.Info("portapapeles recibido: tipo {0}, {1} bytes", first[0] == K_TEXT ? "texto" : first[0] == K_IMAGE ? "imagen" : first[0] == K_PASTE ? "pegado remoto" : "archivos", first.Length - 1);
                     switch (first[0])
                     {
                         case K_TEXT:
@@ -338,6 +382,9 @@ namespace Cruce
                             break;
                         case K_DROP:
                             ReceiveDrop(s, first);
+                            break;
+                        case K_PASTE:
+                            PasteHere(Encoding.UTF8.GetString(first, 1, first.Length - 1));
                             break;
                     }
                 }

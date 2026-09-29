@@ -188,11 +188,21 @@ namespace Cruce
             if (nCode >= 0)
             {
                 var k = (KBDLLHOOKSTRUCT*)l;
-                if ((k->flags & Native.LLKHF_INJECTED) == 0 || (cfg.TestAcceptInjected && k->dwExtraInfo != Tag))
+                bool injected = (k->flags & Native.LLKHF_INJECTED) != 0;
+                if (!injected || (cfg.TestAcceptInjected && k->dwExtraInfo != Tag && k->dwExtraInfo != TestOtherApp))
                 {
                     bool block = false;
                     try { block = OnKey((int)(k->vkCode & 0xFF), (int)k->scanCode, (k->flags & Native.LLKHF_EXTENDED) != 0, (k->flags & Native.LLKHF_UP) != 0); }
                     catch (Exception ex) { Log.Error(ex, "kb hook"); }
+                    if (block) return new IntPtr(1);
+                }
+                else if (k->dwExtraInfo != Tag && mode == Mode.Remote)
+                {
+                    // Keys typed by another program on this PC (e.g. Dictalo pasting) while you drive the
+                    // other PC belong over there, where you are.
+                    bool block = false;
+                    try { block = OnOtherAppKey((int)(k->vkCode & 0xFF), (int)k->scanCode, (k->flags & Native.LLKHF_EXTENDED) != 0, (k->flags & Native.LLKHF_UP) != 0); }
+                    catch (Exception ex) { Log.Error(ex, "kb hook (otra app)"); }
                     if (block) return new IntPtr(1);
                 }
             }
@@ -300,6 +310,7 @@ namespace Cruce
 
                     case Mode.Remote:
                         if (localKeys[vk]) { if (up) localKeys[vk] = false; return false; } // held since before crossing
+                        if (IsLocalKey(vk)) return false; // keys that never cross (e.g. Dictalo's F9): stay on this PC
                         if ((scan & 0x200) != 0) return true; // AltGr's synthetic LCtrl; the other PC makes its own
                         remoteKeys[vk] = !up;
                         remoteScan[vk] = (ushort)scan;
@@ -312,6 +323,81 @@ namespace Cruce
                         return false;
                 }
             }
+        }
+
+        public static readonly IntPtr TestOtherApp = new IntPtr(0x44494354); // tests: simulate "another program"
+        bool otherCtrl, otherV;
+        HashSet<int> localKeySet;
+
+        volatile bool localKeysActive = true;
+        long lastLocalAppCheck;
+
+        bool IsLocalKey(int vk)
+        {
+            if (!localKeysActive) return false;
+            var s = localKeySet;
+            if (s == null) { s = cfg.LocalKeyCodes(); localKeySet = s; }
+            return s.Contains(vk);
+        }
+
+        /// <summary>Local keys apply only while their program (Dictalo) runs on this PC. Checked off the input path.</summary>
+        void RefreshLocalKeys(long now)
+        {
+            if (now - lastLocalAppCheck < 3000000) return;
+            lastLocalAppCheck = now;
+            string app = cfg.LocalKeysApp;
+            if (string.IsNullOrEmpty(app)) { localKeysActive = true; return; }
+            ThreadPool.QueueUserWorkItem(_ =>
+            {
+                try
+                {
+                    var ps = System.Diagnostics.Process.GetProcessesByName(app);
+                    bool on = ps.Length > 0;
+                    foreach (var p in ps) p.Dispose();
+                    if (on != localKeysActive) Log.Info("teclas que no cruzan ({0}): {1}", cfg.LocalKeys, on ? app + " está abierto, se quedan en esta PC" : app + " no está abierto, cruzan normal");
+                    localKeysActive = on;
+                }
+                catch { }
+            });
+        }
+
+        /// <summary>Another program's synthetic key while we drive the other PC.</summary>
+        bool OnOtherAppKey(int vk, int scan, bool ext, bool up)
+        {
+            lock (gate)
+            {
+                if (mode != Mode.Remote) return false;
+                bool isCtrl = vk == 0x11 || vk == 0xA2 || vk == 0xA3;
+                if (isCtrl) otherCtrl = !up;
+                if (vk == 0x56 && (otherCtrl || otherV))
+                {
+                    // Ctrl+V from a program here (Dictalo): send the clipboard text and paste it over there.
+                    if (!up && !otherV) { otherV = true; RemotePasteLocked(); }
+                    if (up) otherV = false;
+                    return true;
+                }
+                SendKeyLocked(vk, scan, ext, up); // Ctrl too, so other shortcuts (Ctrl+C…) arrive whole
+                return true;
+            }
+        }
+
+        void RemotePasteLocked()
+        {
+            var ui = Ui;
+            if (ui == null) return;
+            ui.BeginInvoke(new Action(() =>
+            {
+                string text = null;
+                for (int i = 0; i < 6 && text == null; i++)
+                {
+                    try { text = System.Windows.Clipboard.ContainsText() ? System.Windows.Clipboard.GetText() : ""; }
+                    catch { Thread.Sleep(30); }
+                }
+                var c = Clip != null ? Clip() : null;
+                if (string.IsNullOrEmpty(text) || c == null) { Log.Info("pegado remoto: no había texto en el portapapeles"); return; }
+                c.SendPaste(text);
+                Log.Info("pegado remoto: otra app pegó {0} caracteres mientras manejabas la otra PC; los mando para pegarlos allá", text.Length);
+            }));
         }
 
         bool CtrlAltLocked()
@@ -956,6 +1042,7 @@ namespace Cruce
                     if (lk != null) lk.AnnounceNow();
                 }
             }
+            RefreshLocalKeys(now);
             if (lastTickUs != 0 && mode != Mode.Local) Interlocked.Add(ref activeUs, now - lastTickUs);
             lastTickUs = now;
             if (now - lastHookCheck > 3000000)

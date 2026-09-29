@@ -24,6 +24,8 @@ namespace Cruce
         public bool Clipboard = true;
         public bool Files = true;
         public int MoveIntervalUs = 1000;
+        public string LocalKeys = "F9";    // keys that never cross: they stay on this PC (e.g. Dictalo's F9)...
+        public string LocalKeysApp = "DictadoApp"; // ...but only while this program runs here ("" = always)
         public int PeerPort;               // 0 = same as Port (only differs in local testing)
         public bool TestAcceptInjected;    // testing only: treat synthetic input as real
 
@@ -51,6 +53,8 @@ namespace Cruce
                 if (kv.TryGetValue("Files", out v)) c.Files = v == "1";
                 if (kv.TryGetValue("MoveIntervalUs", out v)) int.TryParse(v, out c.MoveIntervalUs);
                 if (kv.TryGetValue("PeerPort", out v)) int.TryParse(v, out c.PeerPort);
+                if (kv.TryGetValue("LocalKeys", out v)) c.LocalKeys = v;
+                if (kv.TryGetValue("LocalKeysApp", out v)) c.LocalKeysApp = v;
                 if (kv.TryGetValue("TestAcceptInjected", out v)) c.TestAcceptInjected = v == "1";
                 c.Speed = Math.Max(0.25, Math.Min(4, c.Speed));
                 if (c.Port <= 0 || c.Port > 65535) c.Port = 47810;
@@ -58,6 +62,20 @@ namespace Cruce
             }
             catch (Exception ex) { Log.Error(ex, "config load"); }
             return c;
+        }
+
+        /// <summary>LocalKeys as virtual-key codes. Accepts F1..F24 or hex codes like 0x78, separated by commas.</summary>
+        public HashSet<int> LocalKeyCodes()
+        {
+            var set = new HashSet<int>();
+            foreach (var raw in (LocalKeys ?? "").Split(new[] { ',', ';', ' ' }, StringSplitOptions.RemoveEmptyEntries))
+            {
+                var k = raw.Trim().ToUpperInvariant();
+                int n;
+                if (k.Length >= 2 && k[0] == 'F' && int.TryParse(k.Substring(1), out n) && n >= 1 && n <= 24) set.Add(0x70 + n - 1);
+                else if (k.StartsWith("0X") && int.TryParse(k.Substring(2), NumberStyles.HexNumber, CultureInfo.InvariantCulture, out n)) set.Add(n & 0xFF);
+            }
+            return set;
         }
 
         public void Save()
@@ -77,6 +95,8 @@ namespace Cruce
                 sb.AppendLine("Clipboard=" + (Clipboard ? "1" : "0"));
                 sb.AppendLine("Files=" + (Files ? "1" : "0"));
                 sb.AppendLine("MoveIntervalUs=" + MoveIntervalUs);
+                sb.AppendLine("LocalKeys=" + LocalKeys);
+                sb.AppendLine("LocalKeysApp=" + LocalKeysApp);
                 if (PeerPort != 0) sb.AppendLine("PeerPort=" + PeerPort);
                 if (TestAcceptInjected) sb.AppendLine("TestAcceptInjected=1");
                 var tmp = FilePath + ".tmp";

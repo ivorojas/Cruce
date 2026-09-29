@@ -267,6 +267,8 @@ namespace Cruce
                     link.QueueReliable(Ev.DragPull, b.ToArray());
                 };
                 h.PeerUp = p => peer = p;
+                ClipSync.TestNoInject = true;
+                ClipSync.TestPasted = text => h.Log("PASTE '" + text + "'");
                 clip = new ClipSync(keys, port, () => peer != null ? new IPEndPoint(peer.Ep.Address, peer.TcpPort > 0 ? peer.TcpPort : peerPort) : null, () => new Config(), disp);
                 h.TcpPort = clip.ListenPort;
                 link = new Link(keys, port, peerPort, IPAddress.Loopback, h);
@@ -306,6 +308,7 @@ namespace Cruce
                     case Ev.DragDrop: { uint id = r.U32(); int x = r.I32(), y = r.I32(); Log("DRAG_DROP id=" + id + " en " + x + "," + y); OnDrop(id, x, y); break; }
                     case Ev.DragCancel: Log("DRAG_CANCEL " + r.U32()); break;
                     case Ev.Button: Log("BUTTON b=" + r.U8() + " down=" + r.U8()); break;
+                    case Ev.Key: { int vk = r.U16(); r.U16(); Log(string.Format("KEY 0x{0:X2} {1}", vk, (r.U8() & 1) != 0 ? "up" : "down")); break; }
                     default: Log("EV " + t); break;
                 }
             }
