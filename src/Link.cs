@@ -20,6 +20,7 @@ namespace Cruce
         public long SideStamp;
         public bool Elevated;
         public int TcpPort;
+        public string NetLabel = "";
     }
 
     public sealed class HelloInfo
@@ -30,6 +31,7 @@ namespace Cruce
         public long SideStamp;
         public bool Elevated;
         public int TcpPort;
+        public string NetLabel = "";
     }
 
     public interface ILinkHandler
@@ -280,6 +282,7 @@ namespace Cruce
             w.U8(mons.Length);
             foreach (var m in mons) { w.I32(m.L); w.I32(m.T); w.I32(m.R); w.I32(m.B); w.U16(m.Dpi); }
             w.U16(hi.TcpPort);
+            w.Str(hi.NetLabel ?? "");
             lock (gate) lastHelloSend = NowUs();
             if (Trace) Log.Info("[{0}] hello{1} -> {2} destinos (1ro {3})", BoundPort, reply ? "(reply)" : "", eps.Length, eps.Length > 0 ? eps[0].ToString() : "-");
             SendRaw(w.B, w.P, eps);
@@ -388,6 +391,7 @@ namespace Cruce
             var mons = new Mon[mc];
             for (int i = 0; i < mc; i++) { mons[i].L = r.I32(); mons[i].T = r.I32(); mons[i].R = r.I32(); mons[i].B = r.I32(); mons[i].Dpi = r.U16(); }
             int tcpPort = r.Left >= 2 ? r.U16() : 0;
+            string netLabel = r.Left >= 2 ? r.Str() : "";
             if (proto != PROTO) return;
 
             bool isNew = false, changed = false;
@@ -407,7 +411,8 @@ namespace Cruce
                     changed = peer.Name != name || !Geo.Same(peer.Mons, mons) || peer.SideStamp != stamp || peer.SideOfMe != side || peer.Elevated != elev;
                 }
                 CountRx(sid, ctr);
-                peer.TcpPort = tcpPort; peer.Name = name; peer.Mons = mons; peer.SideOfMe = side; peer.SideStamp = stamp; peer.Elevated = elev;
+                if (peer.NetLabel != netLabel) changed = true;
+                peer.NetLabel = netLabel; peer.TcpPort = tcpPort; peer.Name = name; peer.Mons = mons; peer.SideOfMe = side; peer.SideStamp = stamp; peer.Elevated = elev;
                 if (peer.Ep == null || !peer.Ep.Equals(ep)) { peer.Ep = ep; }
                 lastKnownEp = ep;
                 Interlocked.Exchange(ref lastHeard, NowUs());

@@ -747,6 +747,7 @@ namespace Cruce
             h.SideStamp = cfg.SideStamp;
             h.Elevated = IsElevated != null && IsElevated();
             h.TcpPort = TcpPort;
+            h.NetLabel = Diag.NetLabel();
             return h;
         }
 

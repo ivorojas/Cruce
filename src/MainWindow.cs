@@ -309,7 +309,7 @@ namespace Cruce
             else modeText.Text = "Estás usando esta PC";
 
             if (connected && !p.Elevated)
-                sideHint.Text = p.Name + " no tiene permisos de admin: ahí no vas a poder usar ventanas de administrador.";
+                sideHint.Text = p.Name + " corre sin admin (no maneja ventanas de admin).";
             else sideHint.Text = "Se sincroniza sola en las dos PCs.";
 
             if (connected && st != null && st.RttMs >= 0)
@@ -359,11 +359,11 @@ namespace Cruce
                 ? "Elegí una clave y poné la misma en las dos PCs."
                 : "Poné la misma clave en las dos PCs. Todo viaja cifrado con ella.";
 
-            footer.Text = !string.IsNullOrEmpty(Updater.Status) ? Updater.Status : "Esta PC: " + app.Cfg.Name + "  ·  " + LocalIp() + "  ·  v" + AppController.Version;
+            footer.Text = !string.IsNullOrEmpty(Updater.Status) ? Updater.Status : LocalIp() + "  ·  v" + AppController.Version;
 
             if (IsVisible)
             {
-                string sig = string.Join("|", new object[] { app.Cfg.Side, e.Mode, p != null ? p.Name + p.Session + string.Join(",", p.Mons.Select(m => m.L + ":" + m.T + ":" + m.R + ":" + m.B)) : "-", string.Join(",", e.LocalMons.Select(m => m.L + ":" + m.T + ":" + m.R + ":" + m.B)), map.ActualWidth, map.ActualHeight, app.Cfg.Name });
+                string sig = string.Join("|", new object[] { app.Cfg.Side, e.Mode, p != null ? p.Name + p.Session + string.Join(",", p.Mons.Select(m => m.L + ":" + m.T + ":" + m.R + ":" + m.B)) : "-", string.Join(",", e.LocalMons.Select(m => m.L + ":" + m.T + ":" + m.R + ":" + m.B)), map.ActualWidth, map.ActualHeight, app.Cfg.Name, Diag.NetLabel(), p != null ? p.NetLabel : "" });
                 if (sig != mapSig) { mapSig = sig; DrawMap(); }
             }
         }
@@ -427,8 +427,9 @@ namespace Cruce
             mSc = sc; mTx = tx; mTy = ty; mOx = ox; mOy = oy;
 
             bool hereActive = e.Mode != Mode.Remote;
-            foreach (var m in local) Monitor(m.L * sc + tx, m.T * sc + ty, m.W * sc, m.H * sc, CAccent, hereActive && p != null, false, m);
-            foreach (var m in remote) Monitor((m.L + ox) * sc + tx, (m.T + oy) * sc + ty, m.W * sc, m.H * sc, CViolet, !hereActive, !known, m);
+            string netHere = Diag.NetLabel(), netThere = p != null ? p.NetLabel : "";
+            foreach (var m in local) Monitor(m.L * sc + tx, m.T * sc + ty, m.W * sc, m.H * sc, CAccent, hereActive && p != null, false, m, netHere);
+            foreach (var m in remote) Monitor((m.L + ox) * sc + tx, (m.T + oy) * sc + ty, m.W * sc, m.H * sc, CViolet, !hereActive, !known, m, netThere);
 
             GroupLabel(lb.Left * sc + tx, lb.Top * sc + ty, lb.Width * sc, "ESTA PC", app.Cfg.Name, CAccent);
             GroupLabel(rb.Left * sc + tx, rb.Top * sc + ty, rb.Width * sc, known ? "OTRA PC" : "OTRA PC", known ? p.Name : "sin conectar", CViolet);
@@ -456,7 +457,7 @@ namespace Cruce
             MoveDot();
         }
 
-        void Monitor(double x, double y, double w, double h, Color c, bool active, bool placeholder, Mon m)
+        void Monitor(double x, double y, double w, double h, Color c, bool active, bool placeholder, Mon m, string net)
         {
             var border = new Border
             {
@@ -478,6 +479,8 @@ namespace Cruce
                 sp.Children.Add(new TextBlock { Text = m.W + " × " + m.H, Foreground = B(Color.FromRgb(0xEC, 0xEE, 0xF4), 0xD0), FontSize = 11.5, HorizontalAlignment = HorizontalAlignment.Center });
                 if (m.Dpi > 0 && m.Dpi != 96 && h > 50)
                     sp.Children.Add(new TextBlock { Text = Math.Round(m.Dpi * 100.0 / 96) + "%", Foreground = B(CGray), FontSize = 10.5, HorizontalAlignment = HorizontalAlignment.Center });
+                if (!string.IsNullOrEmpty(net) && h > 44)
+                    sp.Children.Add(new TextBlock { Text = net, Foreground = B(net.Contains("2,4") ? CAmber : CGreen), FontSize = 10.5, Margin = new Thickness(0, 2, 0, 0), HorizontalAlignment = HorizontalAlignment.Center, TextTrimming = TextTrimming.CharacterEllipsis, MaxWidth = Math.Max(20, w - 10) });
                 border.Child = sp;
             }
             if (active) border.Effect = new DropShadowEffect { Color = c, BlurRadius = 26, ShadowDepth = 0, Opacity = 0.55 };

@@ -79,7 +79,7 @@ namespace Cruce
 
     public sealed class AppController
     {
-        public const string Version = "1.14";
+        public const string Version = "1.15";
 
         readonly Application app;
         public readonly Config Cfg;
@@ -199,12 +199,18 @@ namespace Cruce
             if (tray != null) tray.Update(status, state, Engine.Paused);
         }
 
+        [DllImport("user32.dll", EntryPoint = "ShowWindow")] static extern bool ShowWindowNative(IntPtr h, int cmd);
+        [DllImport("user32.dll")] static extern bool IsIconic(IntPtr h);
+
         public void ShowWindow()
         {
             win.Show();
             if (win.WindowState == WindowState.Minimized) win.WindowState = WindowState.Normal;
+            var h = new System.Windows.Interop.WindowInteropHelper(win).Handle;
+            if (h != IntPtr.Zero && IsIconic(h)) ShowWindowNative(h, 9); // SW_RESTORE, in case WPF missed an outside minimize
             win.Activate();
             win.Topmost = true; win.Topmost = false;
+            if (h != IntPtr.Zero) Native.SetForegroundWindow(h);
         }
 
         double uiHangMs;

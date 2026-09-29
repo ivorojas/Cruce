@@ -421,6 +421,22 @@ namespace Cruce
             return string.Format("{0}, batería {1}%, ahorro de batería {2}, modo {3}, plan {4}", r.Power, r.BatteryPct, r.Saver == 1 ? "sí" : "no", r.PowerMode, r.Plan);
         }
 
+        /// <summary>How this PC reaches the network, for the map: "Cable", "WiFi 5 GHz · canal 157"… ("" if unknown yet).</summary>
+        public static string NetLabel()
+        {
+            try
+            {
+                if (WifiNative.Available && WifiNative.Connected && WifiNative.Channel > 0)
+                    return "WiFi " + (WifiNative.Channel <= 14 ? "2,4 GHz" : "5 GHz") + " · canal " + WifiNative.Channel;
+                var w = wifi;
+                if (w.OnWifi && w.Channel > 0) return "WiFi " + (w.Channel <= 14 ? "2,4 GHz" : "5 GHz") + " · canal " + w.Channel;
+                var ni = netIf;
+                if (ni != null) return ni.NetworkInterfaceType == NetworkInterfaceType.Wireless80211 ? "WiFi" : "Cable";
+            }
+            catch { }
+            return "";
+        }
+
         /// <summary>One-line picture of the current state, for incident files.</summary>
         public static string Snapshot()
         {
