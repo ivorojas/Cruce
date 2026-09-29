@@ -969,7 +969,7 @@ namespace Cruce
                         Log.Info("volviste después de {0:0} min sin usar la PC (pantalla bloqueada o segura). Reengancho por las dudas.", gap / 60000.0);
                     else
                     {
-                        Log.Info("HOOK MUERTO: hubo input que la captura no vio ({0} ms). Reenganchando.", gap);
+                        Log.Info("HOOK MUERTO: hubo input que la captura no vio ({0} ms). En primer plano: {1}. Reenganchando.", gap, ForegroundInfo());
                         Flight.Incident("hook_muerto", "Windows dejó de pasarle el mouse/teclado a Cruce (pantalla segura, UAC o hook desenganchado)");
                     }
                     lastHookTick = Environment.TickCount;
@@ -996,6 +996,28 @@ namespace Cruce
         }
 
         public static Func<double> TakeUiHang;
+
+        [DllImport("user32.dll")] static extern IntPtr GetForegroundWindow();
+        [DllImport("user32.dll")] static extern uint GetWindowThreadProcessId(IntPtr h, out uint pid);
+
+        /// <summary>Which program is in front and whether it runs as admin (Windows hides its input from non-admin apps).</summary>
+        static string ForegroundInfo()
+        {
+            try
+            {
+                uint pid;
+                GetWindowThreadProcessId(GetForegroundWindow(), out pid);
+                if (pid == 0) return "nada (pantalla segura: bloqueo o UAC)";
+                using (var p = System.Diagnostics.Process.GetProcessById((int)pid))
+                {
+                    string name = p.ProcessName;
+                    bool admin = false;
+                    try { var m = p.MainModule; } catch (System.ComponentModel.Win32Exception) { admin = !Autostart.IsAdmin(); }
+                    return name + (admin ? " (corre como ADMIN: Cruce sin admin no ve el input sobre esa ventana)" : "");
+                }
+            }
+            catch (Exception ex) { return "desconocido (" + ex.Message + ")"; }
+        }
 
         void BuildMinute()
         {

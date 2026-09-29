@@ -28,6 +28,7 @@ namespace Cruce
         static long wantSince = NowMs();
         static int dirty = 1;
         static bool errorLogged;
+        static Mode lastLogged = (Mode)(-1);
         static Thread worker;
         static volatile bool running;
         static readonly int pid = Process.GetCurrentProcess().Id;
@@ -111,6 +112,7 @@ namespace Cruce
                     k.SetValue("Pid", pid, RegistryValueKind.DWord);
                     k.SetValue("Version", 1, RegistryValueKind.DWord);
                 }
+                if (wantMode != lastLogged) { lastLogged = wantMode; Log.Info("presencia: {0}{1}", wantMode, string.IsNullOrEmpty(wantPeer) ? "" : " (otra PC: " + wantPeer + ")"); }
             }
             catch (Exception ex) { LogOnce(ex); }
         }
