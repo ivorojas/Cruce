@@ -269,6 +269,14 @@ namespace Cruce
                 h.PeerUp = p => peer = p;
                 ClipSync.TestNoInject = true;
                 ClipSync.TestPasted = text => h.Log("PASTE '" + text + "'");
+                // Echo app messages back through the same kind of channel they came on.
+                ClipSync.TestAppMsg = (app, json) => { h.Log("APPMSG grande app=" + app + " " + json.Length + " chars"); clip.SendAppMsg(app, json); };
+                h.OnAppMsg = (app, json) =>
+                {
+                    h.Log("APPMSG chico app=" + app + " " + json);
+                    var b = new WBuf(64); b.Str(app); b.Str(json);
+                    link.QueueReliable(Ev.AppMsg, b.ToArray());
+                };
                 clip = new ClipSync(keys, port, () => peer != null ? new IPEndPoint(peer.Ep.Address, peer.TcpPort > 0 ? peer.TcpPort : peerPort) : null, () => new Config(), disp);
                 h.TcpPort = clip.ListenPort;
                 link = new Link(keys, port, peerPort, IPAddress.Loopback, h);
@@ -288,6 +296,7 @@ namespace Cruce
             public Action<string> Log;
             public Action<uint, int, int> OnDrop;
             public Action<PeerInfo> PeerUp;
+            public Action<string, string> OnAppMsg;
             public int TcpPort;
             public HelloInfo GetHello()
             {
@@ -309,6 +318,7 @@ namespace Cruce
                     case Ev.DragCancel: Log("DRAG_CANCEL " + r.U32()); break;
                     case Ev.Button: Log("BUTTON b=" + r.U8() + " down=" + r.U8()); break;
                     case Ev.Key: { int vk = r.U16(); r.U16(); Log(string.Format("KEY 0x{0:X2} {1}", vk, (r.U8() & 1) != 0 ? "up" : "down")); break; }
+                    case Ev.AppMsg: { string app = r.Str(); OnAppMsg(app, r.Str()); break; }
                     default: Log("EV " + t); break;
                 }
             }

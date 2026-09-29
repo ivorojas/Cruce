@@ -9,7 +9,7 @@ New-Item -ItemType Directory -Force build, dist | Out-Null
 $refs = @(
   "System.dll", "System.Core.dll", "System.Drawing.dll", "System.Windows.Forms.dll", "System.Security.dll", "System.Xaml.dll",
   "$wpf\PresentationCore.dll", "$wpf\PresentationFramework.dll", "$wpf\WindowsBase.dll",
-  "Microsoft.CSharp.dll", "$wpf\UIAutomationClient.dll", "$wpf\UIAutomationTypes.dll"
+  "Microsoft.CSharp.dll", "$wpf\UIAutomationClient.dll", "$wpf\UIAutomationTypes.dll", "System.Web.Extensions.dll"
 ) | ForEach-Object { "-r:$_" }
 $src = Get-ChildItem src\*.cs | ForEach-Object { $_.FullName }
 $common = @('-nologo', '-target:winexe', '-unsafe', '-optimize+', '-platform:anycpu', '-codepage:65001', '-nowarn:1685',

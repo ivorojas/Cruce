@@ -28,6 +28,7 @@ namespace Cruce
         static long wantSince = NowMs();
         static int dirty = 1;
         static bool errorLogged;
+        public static Action Changed;   // e.g. Api pushes the new state to "_state" subscribers
         static Mode lastLogged = (Mode)(-1);
         static Thread worker;
         static volatile bool running;
@@ -112,6 +113,8 @@ namespace Cruce
                     k.SetValue("Pid", pid, RegistryValueKind.DWord);
                     k.SetValue("Version", 1, RegistryValueKind.DWord);
                 }
+                var ch = Changed;
+                if (ch != null) ch();
                 if (wantMode != lastLogged) { lastLogged = wantMode; Log.Info("presencia: {0}{1}", wantMode, string.IsNullOrEmpty(wantPeer) ? "" : " (otra PC: " + wantPeer + ")"); }
             }
             catch (Exception ex) { LogOnce(ex); }

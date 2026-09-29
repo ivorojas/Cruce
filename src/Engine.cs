@@ -12,6 +12,7 @@ namespace Cruce
     {
         public const byte Enter = 1, Leave = 2, Button = 3, Wheel = 4, Key = 5, Takeover = 6, LogLine = 7;
         public const byte DragStart = 8, DragDrop = 9, DragCancel = 10, DragProbe = 11, DragProbeReply = 12, DragPull = 13;
+        public const byte AppMsg = 14;   // small message from a local app (Api) to the same app on the other PC
     }
 
     /// <summary>
@@ -332,9 +333,19 @@ namespace Cruce
         volatile bool localKeysActive = true;
         long lastLocalAppCheck;
 
+        /// <summary>Api: relays a small app message over the reliable channel. Returns false if not linked.</summary>
+        public bool SendAppMsg(string app, string json)
+        {
+            var l = link;
+            if (l == null || peer == null) return false;
+            var w = new WBuf(64 + json.Length * 3);
+            w.Str(app); w.Str(json);
+            return l.QueueReliable(Ev.AppMsg, w.ToArray());
+        }
+
         bool IsLocalKey(int vk)
         {
-            if (!localKeysActive) return false;
+            if (!localKeysActive || Api.DictadoConnected) return false; // Dictado handles cross-PC itself once it uses the API
             var s = localKeySet;
             if (s == null) { s = cfg.LocalKeyCodes(); localKeySet = s; }
             return s.Contains(vk);
@@ -969,6 +980,9 @@ namespace Cruce
                         else Log.Info("RESUMEN {0}: {1}", pp != null ? pp.Name : "otra PC", txt);
                         break;
                     }
+                case Ev.AppMsg:
+                    Api.FromPeer(r.Str(), r.Str());
+                    break;
                 case Ev.DragStart:
                     {
                         r.U32(); r.U16();

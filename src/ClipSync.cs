@@ -23,11 +23,24 @@ namespace Cruce
     /// </summary>
     public sealed class ClipSync : IDisposable
     {
-        const byte K_TEXT = 10, K_IMAGE = 11, K_FILES = 12, K_CHUNK = 13, K_END = 14, K_DROP = 15, K_PASTE = 16;
+        const byte K_TEXT = 10, K_IMAGE = 11, K_FILES = 12, K_CHUNK = 13, K_END = 14, K_DROP = 15, K_PASTE = 16, K_APPMSG = 17;
+
+        /// <summary>Api: a big app message (e.g. a dictated text) over the encrypted TCP stream.</summary>
+        public void SendAppMsg(string app, string json)
+        {
+            var addr = peerAddr();
+            if (addr == null) return;
+            var w = new WBuf(64 + json.Length * 3);
+            w.Str(app);
+            var b = Encoding.UTF8.GetBytes(json);
+            w.I32(b.Length); w.Bytes(b, 0, b.Length);
+            Send(addr, s => WriteFrame(s, K_APPMSG, w.B, 0, w.P), CancellationToken.None, "mensaje de app");
+        }
 
         /// <summary>Tests only: log pastes instead of touching this PC's clipboard and keyboard.</summary>
         public static bool TestNoInject;
         public static Action<string> TestPasted;
+        public static Action<string, string> TestAppMsg;
 
         /// <summary>
         /// "Paste this text over there": another app on this PC (e.g. Dictalo) pasted while you were
@@ -386,6 +399,16 @@ namespace Cruce
                         case K_PASTE:
                             PasteHere(Encoding.UTF8.GetString(first, 1, first.Length - 1));
                             break;
+                        case K_APPMSG:
+                            {
+                                var r = new RBuf(first, 1, first.Length - 1);
+                                string app = r.Str();
+                                int n = r.I32();
+                                string json = Encoding.UTF8.GetString(r.Bytes(n));
+                                var tam = TestAppMsg;
+                                if (tam != null) tam(app, json); else Api.FromPeer(app, json);
+                                break;
+                            }
                     }
                 }
             }
