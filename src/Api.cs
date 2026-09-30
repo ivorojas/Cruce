@@ -1,4 +1,4 @@
-using System;
+﻿using System;
 using System.Collections.Concurrent;
 using System.Collections.Generic;
 using System.IO;
@@ -23,7 +23,7 @@ namespace Cruce
     /// </summary>
     public static class Api
     {
-        public const string PipeName = "Cruce.Api";
+        public static string PipeName = "Cruce.Api"; // tests use another name
         const int SmallLimit = 1000;
 
         sealed class Client
@@ -33,6 +33,9 @@ namespace Cruce
             public readonly HashSet<string> Subs = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
             public readonly object Gate = new object();
             public volatile bool Dead;
+            // Each client has its own outbox and writer thread: a client that stops reading (hung, or mid-update)
+            // can never stall deliveries to the others. If its outbox fills up, it is dropped.
+            public readonly BlockingCollection<string> Out = new BlockingCollection<string>(500);
         }
 
         static Engine engine;
@@ -49,7 +52,8 @@ namespace Cruce
         {
             engine = e; cfg = c; clip = cl;
             running = true;
-            new Thread(AcceptLoop) { IsBackground = true, Priority = ThreadPriority.BelowNormal, Name = "cruce-api" }.Start();
+            // Two listeners: several apps reconnecting at once (e.g. right after their own updates) never find the pipe busy.
+            for (int i = 0; i < 2; i++) new Thread(AcceptLoop) { IsBackground = true, Priority = ThreadPriority.BelowNormal, Name = "cruce-api" }.Start();
             new Thread(DeliverLoop) { IsBackground = true, Priority = ThreadPriority.BelowNormal, Name = "cruce-api-out" }.Start();
         }
 
@@ -93,6 +97,7 @@ namespace Cruce
         {
             var c = new Client { Pipe = pipe, W = new StreamWriter(pipe, new UTF8Encoding(false)) { AutoFlush = true, NewLine = "\n" } };
             lock (clients) clients.Add(c);
+            new Thread(() => WriteLoop(c)) { IsBackground = true, Priority = ThreadPriority.BelowNormal, Name = "cruce-api-write" }.Start();
             try
             {
                 using (var r = new StreamReader(pipe, Encoding.UTF8))
@@ -109,22 +114,42 @@ namespace Cruce
                 }
             }
             catch { }
-            finally
-            {
-                c.Dead = true;
-                lock (clients) clients.Remove(c);
-                RefreshDictado();
-                try { pipe.Dispose(); } catch { }
-            }
+            finally { Drop(c); }
+        }
+
+        static void Drop(Client c)
+        {
+            c.Dead = true;
+            lock (clients) clients.Remove(c);
+            try { c.Out.CompleteAdding(); } catch { }
+            try { c.Pipe.Dispose(); } catch { } // also unblocks a writer stuck on a client that stopped reading
+            RefreshDictado();
         }
 
         static void Write(Client c, string line)
         {
-            lock (c.Gate)
+            if (c.Dead) return;
+            bool queued;
+            try { queued = c.Out.TryAdd(line); } catch (InvalidOperationException) { return; }
+            if (!queued)
             {
-                if (c.Dead) return;
-                try { c.W.WriteLine(line); } catch { c.Dead = true; }
+                Log.Info("api: un programa dejó de leer sus mensajes ({0} pendientes); lo desconecto para no frenar a los demás", c.Out.Count);
+                Drop(c);
             }
+        }
+
+        static void WriteLoop(Client c)
+        {
+            try
+            {
+                foreach (var line in c.Out.GetConsumingEnumerable())
+                {
+                    if (c.Dead) break;
+                    c.W.WriteLine(line);
+                }
+            }
+            catch { }
+            if (!c.Dead) Drop(c);
         }
 
         static Dictionary<string, object> State()
@@ -175,10 +200,12 @@ namespace Cruce
             }
         }
 
+        static bool Subscribed(Client c, string app) { lock (c.Gate) return c.Subs.Contains(app); }
+
         static void RefreshDictado()
         {
             bool any;
-            lock (clients) any = clients.Any(x => !x.Dead && x.Subs.Contains("dictado"));
+            lock (clients) any = clients.Any(x => !x.Dead && Subscribed(x, "dictado"));
             if (any != DictadoConnected) Log.Info("api: Dictado {0} (F9 {1})", any ? "conectado" : "desconectado", any ? "lo maneja Dictado: ya no se retiene en esta PC" : "vuelve a la regla de teclas locales");
             DictadoConnected = any;
         }
@@ -217,7 +244,7 @@ namespace Cruce
                     object data = m.Item3 == null ? (object)State() : js.DeserializeObject(m.Item3);
                     string line = js.Serialize(new Dictionary<string, object> { { "from", m.Item2 }, { "data", data } });
                     List<Client> targets;
-                    lock (clients) targets = clients.Where(x => !x.Dead && x.Subs.Contains(m.Item1)).ToList();
+                    lock (clients) targets = clients.Where(x => !x.Dead && Subscribed(x, m.Item1)).ToList();
                     foreach (var t in targets) Write(t, line);
                 }
                 catch (Exception ex) { Log.Info("api: no pude entregar un mensaje: {0}", ex.Message); }

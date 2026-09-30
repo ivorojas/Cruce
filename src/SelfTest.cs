@@ -1,4 +1,4 @@
-using System;
+﻿using System;
 using System.Collections.Generic;
 using System.Linq;
 using System.Net;
@@ -55,10 +55,54 @@ namespace Cruce
             try { LinkTest(0.25, 47901, 47902); } catch (Exception ex) { Check(false, "enlace: " + ex); }
             try { LinkTest(0.0, 47903, 47904); } catch (Exception ex) { Check(false, "enlace: " + ex); }
             try { PresenceTest(); } catch (Exception ex) { Check(false, "presencia: " + ex.Message); }
+            try { ApiTest(); } catch (Exception ex) { Check(false, "api: " + ex.Message); }
             if (inject) { try { InjectTest(); } catch (Exception ex) { Check(false, "inyección: " + ex.Message); } }
             sb.AppendLine(ok ? "RESULTADO: TODO OK" : "RESULTADO: HAY FALLAS");
             Console.Write(sb.ToString());
             return ok ? 0 : 1;
+        }
+
+        static void ApiTest()
+        {
+            sb.AppendLine("[API local: un programa colgado no frena a los demás]");
+            Api.PipeName = "Cruce.Api.SelfTest." + System.Diagnostics.Process.GetCurrentProcess().Id;
+            Api.Start(null, new Config(), null);
+            int step = 0;
+            Func<System.IO.Pipes.NamedPipeClientStream> open = () =>
+            {
+                var cl = new System.IO.Pipes.NamedPipeClientStream(".", Api.PipeName, System.IO.Pipes.PipeDirection.InOut);
+                try { cl.Connect(3000); } catch (TimeoutException) { throw new TimeoutException("no pude conectarme al pipe (paso " + step + ")"); }
+                step++; return cl;
+            };
+            var stuck = open();   // subscribes and then never reads again
+            var sw1 = new System.IO.StreamWriter(stuck) { AutoFlush = true, NewLine = "\n" };
+            sw1.WriteLine("{\"cmd\":\"subscribe\",\"app\":\"t\"}");
+            var good = open();
+            var sw2 = new System.IO.StreamWriter(good) { AutoFlush = true, NewLine = "\n" };
+            var rd2 = new System.IO.StreamReader(good);
+            sw2.WriteLine("{\"cmd\":\"subscribe\",\"app\":\"t\"}");
+            Check(rd2.ReadLine().Contains("\"ok\":true"), "suscripción confirmada");
+            Thread.Sleep(200);
+            string big = new string('x', 4000);
+            int n = 800, got = 0;
+            var reader = new Thread(() => { try { string line; while (got < n && (line = rd2.ReadLine()) != null) if (line.Contains("\"from\"")) got++; } catch { } }) { IsBackground = true };
+            reader.Start();
+            var t0 = Environment.TickCount;
+            for (int i = 0; i < n; i++) { Api.FromPeer("t", "{\"i\":" + i + ",\"s\":\"" + big + "\"}"); if (i % 50 == 0) Thread.Sleep(5); }
+            reader.Join(15000);
+            Check(got == n, string.Format("el programa que sí lee recibió {0}/{1} mensajes ({2} ms) aunque el otro no lee", got, n, Environment.TickCount - t0));
+            bool dropped = false;
+            // Drain what it had buffered: a dropped client then sees the end of the stream (or a broken pipe).
+            var drain = new Thread(() => { try { var buf = new byte[65536]; while (stuck.Read(buf, 0, buf.Length) > 0) { } dropped = true; } catch { dropped = true; } }) { IsBackground = true };
+            drain.Start();
+            drain.Join(5000);
+            Check(dropped, "al colgado lo desconecta en vez de esperarlo");
+            var third = open();
+            var sw3 = new System.IO.StreamWriter(third) { AutoFlush = true, NewLine = "\n" };
+            var rd3 = new System.IO.StreamReader(third);
+            sw3.WriteLine("{\"cmd\":\"nada\"}");
+            Check(rd3.ReadLine().Contains("comando desconocido"), "después sigue atendiendo programas nuevos; comando desconocido responde con error");
+            try { stuck.Dispose(); good.Dispose(); third.Dispose(); } catch { }
         }
 
         static void PresenceTest()
