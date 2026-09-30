@@ -257,6 +257,7 @@ namespace Cruce
                         return false;
 
                     case Mode.Remote:
+                        if (passive) ResumeLocked();
                         if (msg == Native.WM_MOUSEMOVE) { RemoteMoveLocked(x, y); return true; }
                         if (btn >= 0)
                         {
@@ -313,6 +314,7 @@ namespace Cruce
                     case Mode.Remote:
                         if (localKeys[vk]) { if (up) localKeys[vk] = false; return false; } // held since before crossing
                         if (IsLocalKey(vk)) return false; // keys that never cross (e.g. Dictalo's F9): stay on this PC
+                        if (passive && !up) ResumeLocked();
                         if ((scan & 0x200) != 0) return true; // AltGr's synthetic LCtrl; the other PC makes its own
                         remoteKeys[vk] = !up;
                         remoteScan[vk] = (ushort)scan;
@@ -335,7 +337,42 @@ namespace Cruce
         long lastLocalAppCheck;
 
         // ---- live map on the other PC: while its window is open, it asks where our cursor is when we're the one in use
-        volatile bool peerWatching, localWatching;
+        volatile bool peerWatching, localWatching, reportToPeer;
+        bool passive; // Remote, but the other PC's own mouse took the pointer: ours resumes from wherever it is now
+
+        void PassiveLocked()
+        {
+            var l = link;
+            if (l != null)
+            {
+                for (int vk = 0; vk < 256; vk++)
+                    if (remoteKeys[vk]) { remoteKeys[vk] = false; SendKeyLocked(vk, remoteScan[vk], remoteExt[vk], true); }
+                for (int b = 0; b < 5; b++)
+                    if ((remoteButtons & (1 << b)) != 0) SendButtonLocked(b, false);
+                l.ResetMove();
+                l.Active = false;
+            }
+            remoteButtons = 0;
+            passive = true;
+            rx = PeerCurX; ry = PeerCurY;
+            Log.Info("la otra PC tomó el puntero con su propio mouse: queda allá y este mouse sigue desde donde esté");
+        }
+
+        void ResumeLocked()
+        {
+            passive = false;
+            var l = link;
+            if (l == null) return;
+            rx = PeerCurX; ry = PeerCurY;
+            var p = peer;
+            if (p != null) Geo.Clamp(p.Mons, ref rx, ref ry);
+            l.Active = true;
+            var w = new WBuf(8);
+            w.I32((int)Math.Floor(rx)); w.I32((int)Math.Floor(ry));
+            l.QueueReliable(Ev.Enter, w.ToArray());
+            l.SetMove((int)Math.Floor(rx), (int)Math.Floor(ry));
+            Log.Info("sigo manejando la otra PC desde donde quedó el puntero ({0},{1})", (int)rx, (int)ry);
+        }
         long lastCursorSend;
         int lastCurX = int.MinValue, lastCurY;
         public volatile int PeerCurX, PeerCurY;
@@ -351,7 +388,7 @@ namespace Cruce
 
         void ReportCursor(long now)
         {
-            if (!peerWatching || mode != Mode.Local || now - lastCursorSend < 40000) return;
+            if (!(peerWatching || reportToPeer) || mode != Mode.Local || now - lastCursorSend < 40000) return;
             var l = link;
             if (l == null || peer == null) return;
             POINT c;
@@ -517,6 +554,7 @@ namespace Cruce
             if (inDragId != 0) CancelIncomingLocked();
             rx = nx; ry = ny; haveRemotePos = true;
             mode = Mode.Remote;
+            passive = false;
             remoteButtons = 0;
             Array.Clear(remoteKeys, 0, remoteKeys.Length);
             Native.SetCursorPos(park.X, park.Y);
@@ -598,6 +636,7 @@ namespace Cruce
             }
             remoteButtons = 0;
             mode = Mode.Local;
+            passive = false;
             Log.Info("VUELTA a esta PC en {0},{1} ({2}); estuvo {3:0.0} s en la otra", pt.X, pt.Y, reason, (Link.NowUs() - enteredAt) / 1e6);
             Flight.Add(Flight.K_MODE, (int)Mode.Local, 0);
             if (reason.Contains("no responde")) Flight.Incident("congelado", reason);
@@ -795,7 +834,13 @@ namespace Cruce
             mode = Mode.Local;
             ReleaseInjectedLocked();
             var l = link;
-            if (l != null) { l.Active = false; l.QueueReliable(Ev.Takeover, null); }
+            POINT c;
+            Native.GetCursorPos(out c);
+            var w = new WBuf(8);
+            w.I32(c.X); w.I32(c.Y);
+            // The pointer stays here: keep telling the other PC where it is, so its mouse resumes from this spot.
+            reportToPeer = true; lastCurX = c.X; lastCurY = c.Y;
+            if (l != null) { l.Active = false; l.QueueReliable(Ev.Takeover, w.ToArray()); }
             Interlocked.Increment(ref takeovers);
             Log.Info("RECUPERASTE el control de esta PC (input físico mientras la controlaban)");
         }
@@ -803,9 +848,11 @@ namespace Cruce
         /// <summary>Leaves any cross-PC state without talking to the other side (link lost or replaced).</summary>
         void DropSessionLocked()
         {
+            reportToPeer = false;
             if (mode == Mode.Remote)
             {
                 mode = Mode.Local;
+                passive = false;
                 remoteButtons = 0;
                 Array.Clear(remoteKeys, 0, remoteKeys.Length);
                 Native.SetCursorPos(park.X, park.Y);
@@ -937,8 +984,9 @@ namespace Cruce
                         int x = r.I32(), y = r.I32();
                         lock (gate)
                         {
-                            if (mode == Mode.Remote) ReturnLocalLocked(park, false, "conflicto: las dos cruzaron a la vez");
+                            if (mode == Mode.Remote) ReturnLocalLocked(park, false, passive ? "la otra PC cruzó hacia acá" : "conflicto: las dos cruzaron a la vez");
                             mode = Mode.Controlled;
+                            reportToPeer = false;
                             takeoverAccum = 0;
                             var l = link;
                             if (l != null) l.Active = true;
@@ -951,6 +999,7 @@ namespace Cruce
                 case Ev.Leave:
                     lock (gate)
                     {
+                        reportToPeer = false;
                         if (mode == Mode.Controlled)
                         {
                             ReleaseInjectedLocked();
@@ -1022,6 +1071,7 @@ namespace Cruce
                     break;
                 case Ev.Cursor:
                     PeerCurX = r.I32(); PeerCurY = r.I32();
+                    lock (gate) { if (mode == Mode.Remote && passive) { rx = PeerCurX; ry = PeerCurY; } }
                     Interlocked.Exchange(ref PeerCurAt, Link.NowUs());
                     break;
                 case Ev.DragStart:
@@ -1066,7 +1116,12 @@ namespace Cruce
                         break;
                     }
                 case Ev.Takeover:
-                    lock (gate) { if (mode == Mode.Remote) ReturnLocalLocked(park, false, "la otra PC tomó el control (la tocaron)"); }
+                    lock (gate)
+                    {
+                        if (mode != Mode.Remote) break;
+                        if (d.Length >= 8) { PeerCurX = r.I32(); PeerCurY = r.I32(); PassiveLocked(); }
+                        else ReturnLocalLocked(park, false, "la otra PC tomó el control (la tocaron)"); // older Cruce: no position
+                    }
                     break;
             }
         }
