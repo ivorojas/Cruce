@@ -1249,6 +1249,9 @@ namespace Cruce
             Log.Info("RESUMEN {0}: ida y vuelta {1}/{2}/{3} ms (prom/p95/max), tramo red p95 {4} ms, tirones {5} (máx {6} ms), pérdida {7}%, router {8}/{9} ms, internet p95 {10} ms, tráfico {11}/{12} KB/s, usando {13} s, cruces {14}, {15}, cpu {16}% [{17}], causa={18}, llegada desde la otra PC p50/p95 {19}/{20} ms",
                 cfg.Name, v(row.RttAvg), v(row.RttP95), v(row.RttMax), v(row.OwdP95), row.Stutters, v(row.StutterMaxMs), v(row.LossPct), v(row.RouterAvg), v(row.RouterP95), v(row.InetP95),
                 v(row.NetRxKBs), v(row.NetTxKBs), v(row.ActiveS), row.Crossings, Diag.WifiShort(), v(row.CpuSys), row.TopCpu, row.Cause, v(row.OwdInP50), v(row.OwdInP95));
+            var cs = Clip != null ? Clip() : null;
+            string apps = cs != null ? cs.TakeAppStats() : null;
+            if (apps != null) Log.Info("mensajes de apps (último minuto): {0}", apps);
             lk2.QueueReliable(Ev.LogLine, System.Text.Encoding.UTF8.GetBytes("CSV|" + csv));
         }
 

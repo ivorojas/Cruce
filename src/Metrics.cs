@@ -17,6 +17,7 @@ namespace Cruce
         public string Band = "", Cause = "ok";
         // v1.8
         public double OwdInP50 = -1, OwdInP95 = -1; // absolute one-way delay of everything arriving from the other PC (clock-synced)
+        public int QosOn = -1; // this PC marks its packets as voice priority (1/0)
         public double OwdP50 = -1, OwdP95 = -1, OwdMax = -1, CaptureP95 = -1, HookDelayP95 = -1, InjectP95Us = -1, StutterMaxMs, RssiAvg = 0, RssiMin = 0, WifiRetryPct = -1;
         public double NetRxKBs = -1, NetTxKBs = -1, NetPeakKBs = -1, InetAvg = -1, InetP95 = -1, CpuMhzPct = -1, UiHangMs;
         public int Stutters, WifiFailures = -1, WifiScans = -1, WifiRoams = -1, WifiDisconnects = -1, WifiEvents = -1, InetFails, Incidents, LowLatency = -1;
@@ -26,7 +27,7 @@ namespace Cruce
         public int BatteryPct = -1, Saver = -1;
 
         public const string Header = "fecha_hora;pc;activo_s;cruces;rtt_prom_ms;rtt_p95_ms;rtt_max_ms;picos_30ms;perdida_pct;paquetes;router_prom_ms;router_p95_ms;router_max_ms;router_fallas;wifi_senal_pct;wifi_banda;wifi_canal;wifi_rx_mbps;redes_mismo_canal;redes_solapadas;vecino_mas_fuerte;cpu_sistema_pct;cpu_cruce_pct;frenadas;hook_lento;bloqueos_windows;causa"
-            + ";tramo_red_p50_ms;tramo_red_p95_ms;tramo_red_max_ms;captura_p95_ms;demora_windows_p95_ms;aplicar_p95_us;tirones;tiron_max_ms;wifi_rssi_prom_dbm;wifi_rssi_min_dbm;wifi_reintentos_pct;wifi_fallas_tx;wifi_escaneos;wifi_roaming;wifi_desconexiones;wifi_eventos;red_bajada_kbs;red_subida_kbs;red_pico_kbs;internet_prom_ms;internet_p95_ms;internet_fallas;cpu_frecuencia_pct;top_cpu;incidentes;ui_colgada_ms;wifi_baja_latencia;energia;bateria_pct;ahorro_bateria;modo_energia;plan_energia;llegada_red_p50_ms;llegada_red_p95_ms";
+            + ";tramo_red_p50_ms;tramo_red_p95_ms;tramo_red_max_ms;captura_p95_ms;demora_windows_p95_ms;aplicar_p95_us;tirones;tiron_max_ms;wifi_rssi_prom_dbm;wifi_rssi_min_dbm;wifi_reintentos_pct;wifi_fallas_tx;wifi_escaneos;wifi_roaming;wifi_desconexiones;wifi_eventos;red_bajada_kbs;red_subida_kbs;red_pico_kbs;internet_prom_ms;internet_p95_ms;internet_fallas;cpu_frecuencia_pct;top_cpu;incidentes;ui_colgada_ms;wifi_baja_latencia;energia;bateria_pct;ahorro_bateria;modo_energia;plan_energia;llegada_red_p50_ms;llegada_red_p95_ms;qos_voz";
 
         static readonly CultureInfo Inv = CultureInfo.InvariantCulture;
         static string D(double v) { return v < 0 ? "" : v.ToString("0.##", Inv); }
@@ -67,7 +68,7 @@ namespace Cruce
                 D(OwdP50), D(OwdP95), D(OwdMax), D(CaptureP95), D(HookDelayP95), D(InjectP95Us), I(Stutters), D(StutterMaxMs), Dn(RssiAvg), Dn(RssiMin), D(WifiRetryPct),
                 I(WifiFailures), I(WifiScans), I(WifiRoams), I(WifiDisconnects), I(WifiEvents), D(NetRxKBs), D(NetTxKBs), D(NetPeakKBs), D(InetAvg), D(InetP95), I(InetFails),
                 D(CpuMhzPct), S(TopCpu), I(Incidents), D(UiHangMs), I(LowLatency),
-                S(Power), I(BatteryPct), I(Saver), S(PowerMode), S(Plan), D(OwdInP50), D(OwdInP95)
+                S(Power), I(BatteryPct), I(Saver), S(PowerMode), S(Plan), D(OwdInP50), D(OwdInP95), I(QosOn)
             });
         }
 
@@ -96,7 +97,7 @@ namespace Cruce
             }
             if (f.Length > 54)
             {
-                m.Power = f[54]; m.BatteryPct = n(55); m.Saver = n(56); m.PowerMode = f.Length > 57 ? f[57] : ""; m.Plan = f.Length > 58 ? f[58] : ""; m.OwdInP50 = d(59); m.OwdInP95 = d(60);
+                m.Power = f[54]; m.BatteryPct = n(55); m.Saver = n(56); m.PowerMode = f.Length > 57 ? f[57] : ""; m.Plan = f.Length > 58 ? f[58] : ""; m.OwdInP50 = d(59); m.OwdInP95 = d(60); m.QosOn = n(61);
             }
             return m;
         }

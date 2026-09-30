@@ -100,7 +100,7 @@ namespace Cruce
 
     public sealed class AppController
     {
-        public const string Version = "1.22";
+        public const string Version = "1.23";
 
         readonly Application app;
         public readonly Config Cfg;
@@ -151,6 +151,9 @@ namespace Cruce
             upd.Tick += (s, e) => { upd.Interval = TimeSpan.FromHours(3); CheckUpdates(true); };
             upd.Start();
             ThreadPool.QueueUserWorkItem(_ => { Thread.Sleep(15000); Autostart.SyncInstalled(); });
+            var qx = new DispatcherTimer { Interval = TimeSpan.FromSeconds(20) };
+            qx.Tick += (s, e) => QosExperiment();
+            qx.Start();
             win = new MainWindow(this);
             if (show || string.IsNullOrEmpty(Cfg.Secret)) ShowWindow();
 
@@ -199,6 +202,24 @@ namespace Cruce
             later.Start();
             wpf.Run();
             return 0;
+        }
+
+        /// <summary>
+        /// Until Oct 2 the Wi-Fi PC alternates voice priority (QoS) on the first half of each hour and off on the
+        /// second half. The other PC measures when those packets arrive (llegada_red_*), so the report can tell
+        /// whether the laptop's ~50 ms stretches come from the priority marking. After that, QoS stays on.
+        /// </summary>
+        static readonly DateTime QosExperimentUntil = new DateTime(2026, 10, 2);
+        bool qxLogged;
+
+        void QosExperiment()
+        {
+            var l = link;
+            if (l == null) return;
+            bool wifi = WifiNative.Available && WifiNative.Connected;
+            bool on = !(wifi && DateTime.Now < QosExperimentUntil && DateTime.Now.Minute >= 30);
+            if (wifi && DateTime.Now < QosExperimentUntil && !qxLogged) { qxLogged = true; Log.Info("experimento QoS: hasta el {0:d} la prioridad de voz va prendida de :00 a :29 y apagada de :30 a :59", QosExperimentUntil); }
+            if (on != l.QosEnabled) l.SetQos(on);
         }
 
         public void RestartLink()

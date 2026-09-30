@@ -599,6 +599,7 @@ namespace Cruce
                 r.OwdP50 = Pct(owdHist, 0.5, out mx); r.OwdP95 = Pct(owdHist, 0.95, out mx); r.OwdMax = mx;
                 if (best >= 0) { r.OwdP50 -= best; r.OwdP95 -= best; r.OwdMax -= best; }
                 r.CaptureP95 = Pct(capHist, 0.95, out mx);
+                r.QosOn = qosOn ? 1 : 0;
                 if (owdAllCount > 0)
                 {
                     long target = (long)(owdAllCount * 0.95), acc = 0;
@@ -625,7 +626,8 @@ namespace Cruce
             if (us > 30000)
             {
                 minSpikes++;
-                if (now - lastSpikeLog > 2000000) { lastSpikeLog = now; Log.Info("PICO de latencia: {0:0} ms (activo={1})", us / 1000.0, Active); }
+                // Idle spikes are only counted (per-minute summary): logging them filled the log with thousands of lines.
+                if (Active && now - lastSpikeLog > 2000000) { lastSpikeLog = now; Log.Info("PICO de latencia: {0:0} ms mientras usabas la otra PC", us / 1000.0); }
             }
             rttRing[rttIdx & 2047] = us;
             rttAt[rttIdx & 2047] = now;
@@ -776,6 +778,23 @@ namespace Cruce
             qosWake.Set();
         }
 
+        // Experiment switch: the laptop's packets arrive ~50 ms late in stretches; voice-priority (WMM) marking is the
+        // main suspect, so it can be turned off to compare. Off = the flow is removed and packets go as normal traffic.
+        volatile bool qosEnabled = true;
+
+        public bool QosEnabled { get { return qosEnabled; } }
+
+        public void SetQos(bool on)
+        {
+            if (on == qosEnabled) return;
+            qosEnabled = on;
+            IPEndPoint ep;
+            lock (gate) ep = qosEp;
+            if (ep == null) return;
+            qosWanted = ep;
+            qosWake.Set();
+        }
+
         void QosLoop()
         {
             while (running)
@@ -787,6 +806,13 @@ namespace Cruce
                 if (!running || !ReferenceEquals(ep, qosWanted)) continue;
                 qosWanted = null;
                 var sw = Stopwatch.StartNew();
+                if (!qosEnabled)
+                {
+                    try { if (qosFlow != 0 && qosHandle != IntPtr.Zero) QOSRemoveSocketFromFlow(qosHandle, sock.Handle, qosFlow, 0); } catch { }
+                    qosFlow = 0; qosOn = false;
+                    Log.Info("QoS apagado para {0} (experimento: comparar demoras con y sin prioridad de voz)", ep);
+                    continue;
+                }
                 try
                 {
                     if (qosHandle == IntPtr.Zero)

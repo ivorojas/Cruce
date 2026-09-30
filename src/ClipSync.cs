@@ -34,7 +34,20 @@ namespace Cruce
             w.Str(app);
             var b = Encoding.UTF8.GetBytes(json);
             w.I32(b.Length); w.Bytes(b, 0, b.Length);
-            Send(addr, s => WriteFrame(s, K_APPMSG, w.B, 0, w.P), CancellationToken.None, "mensaje de app");
+            Interlocked.Increment(ref appOut); Interlocked.Add(ref appOutBytes, w.P);
+            Send(addr, s => WriteFrame(s, K_APPMSG, w.B, 0, w.P), CancellationToken.None, null);
+        }
+
+        // Apps (Focus, Dictado...) may send many messages: one summary line a minute instead of one line each.
+        long appOut, appOutBytes, appIn, appInBytes;
+
+        /// <summary>"N enviados (X KB), M recibidos (Y KB)" since the last call, or null if there was no app traffic.</summary>
+        public string TakeAppStats()
+        {
+            long o = Interlocked.Exchange(ref appOut, 0), ob = Interlocked.Exchange(ref appOutBytes, 0);
+            long i = Interlocked.Exchange(ref appIn, 0), ib = Interlocked.Exchange(ref appInBytes, 0);
+            if (o == 0 && i == 0) return null;
+            return string.Format("{0} enviados ({1:0} KB), {2} recibidos ({3:0} KB) por TCP", o, ob / 1024.0, i, ib / 1024.0);
         }
 
         /// <summary>Tests only: log pastes instead of touching this PC's clipboard and keyboard.</summary>
@@ -208,7 +221,7 @@ namespace Cruce
                     {
                         tcp.NoDelay = true;
                         var ar = tcp.BeginConnect(addr.Address, addr.Port, null, null);
-                        if (!ar.AsyncWaitHandle.WaitOne(3000)) { Log.Info("{0}: no pude conectar con la otra PC", what); return; }
+                        if (!ar.AsyncWaitHandle.WaitOne(3000)) { Log.Info("{0}: no pude conectar con la otra PC", what ?? "mensaje de app"); return; }
                         tcp.EndConnect(ar);
                         tcp.SendTimeout = 30000;
                         QosBackground(tcp.Client);
@@ -218,13 +231,13 @@ namespace Cruce
                             var sw = System.Diagnostics.Stopwatch.StartNew();
                             body(s);
                             s.Flush();
-                            Log.Info("{0} enviado en {1} ms", what, sw.ElapsedMilliseconds);
+                            if (what != null) Log.Info("{0} enviado en {1} ms", what, sw.ElapsedMilliseconds); // app messages: counted instead
                         }
                     }
                 }
                 catch (OperationCanceledException) { }
-                catch (Exception ex) { Log.Info("{0}: fallo al enviar: {1}", what.ToUpperInvariant(), ex.Message); }
-                finally { Activity = ""; }
+                catch (Exception ex) { Log.Info("{0}: fallo al enviar: {1}", (what ?? "mensaje de app").ToUpperInvariant(), ex.Message); }
+                finally { if (what != null) Activity = ""; } // an app message must not clear a file transfer's status
             });
         }
 
@@ -370,7 +383,8 @@ namespace Cruce
                     var s = c.GetStream();
                     var first = ReadFrame(s);
                     if (first == null || first.Length == 0) return;
-                    Log.Info("portapapeles recibido: tipo {0}, {1} bytes", first[0] == K_TEXT ? "texto" : first[0] == K_IMAGE ? "imagen" : first[0] == K_PASTE ? "pegado remoto" : "archivos", first.Length - 1);
+                    if (first[0] == K_APPMSG) { Interlocked.Increment(ref appIn); Interlocked.Add(ref appInBytes, first.Length); } // summarized once a minute
+                    else Log.Info("portapapeles recibido: tipo {0}, {1} bytes", first[0] == K_TEXT ? "texto" : first[0] == K_IMAGE ? "imagen" : first[0] == K_PASTE ? "pegado remoto" : first[0] == K_DROP ? "arrastre" : "archivos", first.Length - 1);
                     switch (first[0])
                     {
                         case K_TEXT:
