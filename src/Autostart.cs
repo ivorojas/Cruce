@@ -87,6 +87,26 @@ namespace Cruce
             catch (Exception ex) { Log.Error(ex, "autostart"); return ex.Message; }
         }
 
+        /// <summary>
+        /// The logon task starts the copy in InstallDir. If Cruce is running from somewhere else (and updating
+        /// itself there), that copy goes stale and the next login would start an old version. Keep it identical.
+        /// </summary>
+        public static void SyncInstalled()
+        {
+            try
+            {
+                string exe = Process.GetCurrentProcess().MainModule.FileName;
+                string target = Path.Combine(InstallDir, "Cruce.exe");
+                if (string.Equals(Path.GetFullPath(exe), Path.GetFullPath(target), StringComparison.OrdinalIgnoreCase)) return;
+                if (!File.Exists(target) || !IsEnabled()) return;
+                byte[] a = File.ReadAllBytes(exe), b = File.ReadAllBytes(target);
+                if (a.Length == b.Length && System.Linq.Enumerable.SequenceEqual(a, b)) return;
+                File.Copy(exe, target, true);
+                Log.Info("inicio con Windows: la copia instalada ({0}) estaba vieja; la actualicé a esta versión", target);
+            }
+            catch (Exception ex) { Log.Info("inicio con Windows: no pude actualizar la copia instalada ({0})", ex.Message); }
+        }
+
         public static string Disable()
         {
             try

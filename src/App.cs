@@ -59,8 +59,28 @@ namespace Cruce
                 Log.Error(e.ExceptionObject as Exception ?? new Exception("unknown"), "fatal");
             };
             try { Process.GetCurrentProcess().PriorityClass = ProcessPriorityClass.High; } catch { }
+            NoPowerThrottling();
             Log.Info("Cruce {0} starting (admin={1})", AppController.Version, Autostart.IsAdmin());
             return RunApp(args);
+        }
+
+        [StructLayout(LayoutKind.Sequential)]
+        struct PowerThrottlingState { public uint Version, ControlMask, StateMask; }
+        [DllImport("kernel32.dll", SetLastError = true)]
+        static extern bool SetProcessInformation(IntPtr process, int infoClass, ref PowerThrottlingState info, int size);
+
+        /// <summary>Windows 11 puts tray apps in "efficiency mode" (EcoQoS: slow cores, coalesced timers, ignored
+        /// timer-resolution requests), worst in the "best power efficiency" mode the laptop uses. Opt out: every
+        /// millisecond of Cruce's timers is input latency.</summary>
+        static void NoPowerThrottling()
+        {
+            try
+            {
+                var s = new PowerThrottlingState { Version = 1, ControlMask = 0x1 | 0x4, StateMask = 0 }; // EXECUTION_SPEED | IGNORE_TIMER_RESOLUTION, both off
+                bool ok = SetProcessInformation(Process.GetCurrentProcess().Handle, 4 /* ProcessPowerThrottling */, ref s, Marshal.SizeOf(typeof(PowerThrottlingState)));
+                Log.Info("modo eficiencia de Windows desactivado para Cruce: {0}", ok ? "sí" : "no (error " + Marshal.GetLastWin32Error() + ")");
+            }
+            catch (Exception ex) { Log.Info("modo eficiencia: {0}", ex.Message); }
         }
 
         [MethodImpl(MethodImplOptions.NoInlining)]
@@ -80,7 +100,7 @@ namespace Cruce
 
     public sealed class AppController
     {
-        public const string Version = "1.18";
+        public const string Version = "1.19";
 
         readonly Application app;
         public readonly Config Cfg;
@@ -130,6 +150,7 @@ namespace Cruce
             var upd = new DispatcherTimer { Interval = TimeSpan.FromSeconds(20) };
             upd.Tick += (s, e) => { upd.Interval = TimeSpan.FromHours(3); CheckUpdates(true); };
             upd.Start();
+            ThreadPool.QueueUserWorkItem(_ => { Thread.Sleep(15000); Autostart.SyncInstalled(); });
             win = new MainWindow(this);
             if (show || string.IsNullOrEmpty(Cfg.Secret)) ShowWindow();
 

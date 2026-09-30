@@ -112,6 +112,7 @@ namespace Cruce
             IsVisibleChanged += (s, e) =>
             {
                 CompositionTarget.Rendering -= render;
+                app.Engine.SetWatching(IsVisible);
                 if (IsVisible) CompositionTarget.Rendering += render;
                 tick.Interval = TimeSpan.FromMilliseconds(IsVisible ? 250 : 1000);
             };
@@ -426,7 +427,7 @@ namespace Cruce
 
             if (IsVisible)
             {
-                string sig = string.Join("|", new object[] { app.Cfg.Side, e.Mode, p != null ? p.Name + p.Session + string.Join(",", p.Mons.Select(m => m.L + ":" + m.T + ":" + m.R + ":" + m.B)) : "-", string.Join(",", e.LocalMons.Select(m => m.L + ":" + m.T + ":" + m.R + ":" + m.B)), map.ActualWidth, map.ActualHeight, app.Cfg.Name, Diag.NetLabel(), p != null ? p.NetLabel : "", L.English });
+                string sig = string.Join("|", new object[] { app.Cfg.Side, e.Mode, p != null ? p.Name + p.Session + string.Join(",", p.Mons.Select(m => m.L + ":" + m.T + ":" + m.R + ":" + m.B)) : "-", string.Join(",", e.LocalMons.Select(m => m.L + ":" + m.T + ":" + m.R + ":" + m.B)), map.ActualWidth, map.ActualHeight, app.Cfg.Name, Diag.NetLabel(), p != null ? p.NetLabel : "", L.English, CursorOnPeer() });
                 if (sig != mapSig) { mapSig = sig; DrawMap(); }
             }
         }
@@ -489,7 +490,7 @@ namespace Cruce
             double ty = labelH + (H - labelH * 2 - all.Height * sc) / 2 - all.Top * sc;
             mSc = sc; mTx = tx; mTy = ty; mOx = ox; mOy = oy;
 
-            bool hereActive = e.Mode != Mode.Remote;
+            bool hereActive = !CursorOnPeer();
             string netHere = Diag.NetLabel(), netThere = p != null ? p.NetLabel : "";
             foreach (var m in local) Monitor(m.L * sc + tx, m.T * sc + ty, m.W * sc, m.H * sc, CAccent, hereActive && p != null, false, m, netHere);
             foreach (var m in remote) Monitor((m.L + ox) * sc + tx, (m.T + oy) * sc + ty, m.W * sc, m.H * sc, CViolet, !hereActive, !known, m, netThere);
@@ -563,8 +564,31 @@ namespace Cruce
             map.Children.Add(sp);
         }
 
+        // Where the pointer really is. In Remote we drive the other PC; in Local the other PC may be in use with its own
+        // mouse: it reports its cursor while this window is open, and whichever cursor moved last is the live one.
+        int lastLocalX = int.MinValue, lastLocalY;
+        long localMovedAt;
+
+        bool CursorOnPeer()
+        {
+            var e = app.Engine;
+            if (e.Mode == Mode.Remote) return true;
+            if (e.Mode == Mode.Controlled || e.Peer == null) return false;
+            long at = Interlocked.Read(ref e.PeerCurAt);
+            return at != 0 && at > localMovedAt;
+        }
+
+        void TrackLocalCursor()
+        {
+            POINT c;
+            if (!Native.GetCursorPos(out c)) return;
+            if (lastLocalX != int.MinValue && (c.X != lastLocalX || c.Y != lastLocalY) && app.Engine.Mode == Mode.Local) localMovedAt = Link.NowUs();
+            lastLocalX = c.X; lastLocalY = c.Y;
+        }
+
         void MoveDot()
         {
+            TrackLocalCursor();
             if (dot == null) return;
             var e = app.Engine;
             double x, y;
@@ -573,11 +597,13 @@ namespace Cruce
                 e.GetRemotePos(out x, out y);
                 x += mOx; y += mOy;
             }
+            else if (CursorOnPeer())
+            {
+                x = e.PeerCurX + mOx; y = e.PeerCurY + mOy;
+            }
             else
             {
-                POINT c;
-                Native.GetCursorPos(out c);
-                x = c.X; y = c.Y;
+                x = lastLocalX; y = lastLocalY;
             }
             Canvas.SetLeft(dot, x * mSc + mTx - 4.5);
             Canvas.SetTop(dot, y * mSc + mTy - 4.5);

@@ -13,6 +13,7 @@ namespace Cruce
         public const byte Enter = 1, Leave = 2, Button = 3, Wheel = 4, Key = 5, Takeover = 6, LogLine = 7;
         public const byte DragStart = 8, DragDrop = 9, DragCancel = 10, DragProbe = 11, DragProbeReply = 12, DragPull = 13;
         public const byte AppMsg = 14;   // small message from a local app (Api) to the same app on the other PC
+        public const byte Watch = 15, Cursor = 16; // the other PC's window is open / where this PC's own cursor is (for its live map)
     }
 
     /// <summary>
@@ -332,6 +333,36 @@ namespace Cruce
 
         volatile bool localKeysActive = true;
         long lastLocalAppCheck;
+
+        // ---- live map on the other PC: while its window is open, it asks where our cursor is when we're the one in use
+        volatile bool peerWatching, localWatching;
+        long lastCursorSend;
+        int lastCurX = int.MinValue, lastCurY;
+        public volatile int PeerCurX, PeerCurY;
+        public long PeerCurAt; // Link.NowUs() of the last position the other PC reported (0 = none)
+
+        /// <summary>This PC's window became visible/hidden: ask the other PC to (stop) report(ing) its cursor.</summary>
+        public void SetWatching(bool on)
+        {
+            localWatching = on;
+            var l = link;
+            if (l != null && peer != null) l.QueueReliable(Ev.Watch, new[] { (byte)(on ? 1 : 0) });
+        }
+
+        void ReportCursor(long now)
+        {
+            if (!peerWatching || mode != Mode.Local || now - lastCursorSend < 40000) return;
+            var l = link;
+            if (l == null || peer == null) return;
+            POINT c;
+            if (!Native.GetCursorPos(out c)) return;
+            if (lastCurX == int.MinValue) { lastCurX = c.X; lastCurY = c.Y; return; } // only real movement counts
+            if (c.X == lastCurX && c.Y == lastCurY) return;
+            lastCurX = c.X; lastCurY = c.Y; lastCursorSend = now;
+            var w = new WBuf(8);
+            w.I32(c.X); w.I32(c.Y);
+            l.QueueReliable(Ev.Cursor, w.ToArray());
+        }
 
         /// <summary>Api: relays a small app message over the reliable channel. Returns false if not linked.</summary>
         public bool SendAppMsg(string app, string json)
@@ -852,6 +883,8 @@ namespace Cruce
         {
             lock (gate) { DropSessionLocked(); peer = p; edgesValid = false; haveRemotePos = false; }
             SyncSide(p, true);
+            peerWatching = false; lastCurX = int.MinValue; PeerCurAt = 0;
+            if (localWatching) { var l = link; if (l != null) l.QueueReliable(Ev.Watch, new byte[] { 1 }); }
             var n = Notify;
             if (n != null) n(L.F("Conectado con {0}", p.Name));
         }
@@ -974,7 +1007,7 @@ namespace Cruce
                             {
                                 mr.Time = DateTime.Now;
                                 Metrics.Append(mr.ToCsv());
-                                Log.Info("RESUMEN {0}: rtt p95 {1:0} ms, router {2} ms, señal {3}%, canal {4}, vecinos {5}+{6}, causa={7}", mr.Pc, mr.RttP95, mr.RouterP95, mr.Signal, mr.Channel, mr.SameCh, mr.Overlap, mr.Cause);
+                                Log.Info("RESUMEN {0}: rtt p95 {1:0} ms, router {2} ms, señal {3}%, canal {4}, vecinos {5}+{6}, causa={7}, llegada desde esta PC p50/p95 {8}/{9} ms", mr.Pc, mr.RttP95, mr.RouterP95, mr.Signal, mr.Channel, mr.SameCh, mr.Overlap, mr.Cause, mr.OwdInP50, mr.OwdInP95);
                             }
                         }
                         else Log.Info("RESUMEN {0}: {1}", pp != null ? pp.Name : "otra PC", txt);
@@ -982,6 +1015,14 @@ namespace Cruce
                     }
                 case Ev.AppMsg:
                     Api.FromPeer(r.Str(), r.Str());
+                    break;
+                case Ev.Watch:
+                    peerWatching = d.Length > 0 && d[0] == 1;
+                    lastCurX = int.MinValue;
+                    break;
+                case Ev.Cursor:
+                    PeerCurX = r.I32(); PeerCurY = r.I32();
+                    Interlocked.Exchange(ref PeerCurAt, Link.NowUs());
                     break;
                 case Ev.DragStart:
                     {
@@ -1057,6 +1098,7 @@ namespace Cruce
                 }
             }
             RefreshLocalKeys(now);
+            ReportCursor(now);
             if (lastTickUs != 0 && mode != Mode.Local) Interlocked.Add(ref activeUs, now - lastTickUs);
             lastTickUs = now;
             if (now - lastHookCheck > 3000000)
@@ -1149,9 +1191,9 @@ namespace Cruce
             string csv = row.ToCsv();
             Metrics.Append(csv);
             Func<double, string> v = d => d < 0 ? "–" : d.ToString("0.#");
-            Log.Info("RESUMEN {0}: ida y vuelta {1}/{2}/{3} ms (prom/p95/max), tramo red p95 {4} ms, tirones {5} (máx {6} ms), pérdida {7}%, router {8}/{9} ms, internet p95 {10} ms, tráfico {11}/{12} KB/s, usando {13} s, cruces {14}, {15}, cpu {16}% [{17}], causa={18}",
+            Log.Info("RESUMEN {0}: ida y vuelta {1}/{2}/{3} ms (prom/p95/max), tramo red p95 {4} ms, tirones {5} (máx {6} ms), pérdida {7}%, router {8}/{9} ms, internet p95 {10} ms, tráfico {11}/{12} KB/s, usando {13} s, cruces {14}, {15}, cpu {16}% [{17}], causa={18}, llegada desde la otra PC p50/p95 {19}/{20} ms",
                 cfg.Name, v(row.RttAvg), v(row.RttP95), v(row.RttMax), v(row.OwdP95), row.Stutters, v(row.StutterMaxMs), v(row.LossPct), v(row.RouterAvg), v(row.RouterP95), v(row.InetP95),
-                v(row.NetRxKBs), v(row.NetTxKBs), v(row.ActiveS), row.Crossings, Diag.WifiShort(), v(row.CpuSys), row.TopCpu, row.Cause);
+                v(row.NetRxKBs), v(row.NetTxKBs), v(row.ActiveS), row.Crossings, Diag.WifiShort(), v(row.CpuSys), row.TopCpu, row.Cause, v(row.OwdInP50), v(row.OwdInP95));
             lk2.QueueReliable(Ev.LogLine, System.Text.Encoding.UTF8.GetBytes("CSV|" + csv));
         }
 

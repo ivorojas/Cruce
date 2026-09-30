@@ -1,4 +1,4 @@
-using System;
+﻿using System;
 using System.Collections.Generic;
 using System.Diagnostics;
 using System.Linq;
@@ -469,10 +469,10 @@ namespace Cruce
                     {
                         uint rtt = unchecked((uint)now - echo - hold);
                         if (rtt < 5000000) AddRttLocked(rtt, now);
-                        // NTP-style clock offset (peer = me + offset), trusting the lowest-RTT sample of the last 10 s.
+                        // NTP-style clock offset (peer = me + offset), trusting the lowest-RTT sample of the last 60 s.
                         int t1 = unchecked((int)echo), t4 = unchecked((int)(uint)now), t3 = unchecked((int)ts), t2 = unchecked(t3 - (int)hold);
                         int rs = unchecked((t4 - t1) - (int)hold);
-                        if (rs >= 0 && rs < 5000000 && (!offValid || rs <= offBestRtt || now - offAt > 10000000))
+                        if (rs >= 0 && rs < 5000000 && (!offValid || rs <= offBestRtt || now - offAt > 60000000))
                         {
                             offset = unchecked(((t2 - t1) + (t3 - t4)) / 2);
                             offBestRtt = rs; offAt = now; offValid = true;
@@ -522,6 +522,7 @@ namespace Cruce
                     int owd = offValid ? Math.Max(0, unchecked((int)(uint)now - (int)ts + offset)) : -1;
                     Flight.Add(Flight.K_RX, owd, (int)Math.Min(int.MaxValue, now - lastAnyRx));
                     lastAnyRx = now;
+                    if (owd >= 0) { owdAllHist[Math.Min(owdAllHist.Length - 1, owd / 1000)]++; owdAllCount++; }
                     if (doMove)
                     {
                         if (owd >= 0) Bucket(owdHist, owd);
@@ -558,6 +559,8 @@ namespace Cruce
         int prevMoveTs;
         uint lastTxSeq;
         readonly int[] owdHist = new int[1001], capHist = new int[1001]; // 250 µs buckets, last = overflow
+        readonly int[] owdAllHist = new int[1001]; // every packet from the peer, absolute one-way delay, 1 ms buckets
+        long owdAllCount;
 
         static void Bucket(int[] h, int us) { h[Math.Min(h.Length - 1, us / 250)]++; }
 
@@ -596,6 +599,14 @@ namespace Cruce
                 r.OwdP50 = Pct(owdHist, 0.5, out mx); r.OwdP95 = Pct(owdHist, 0.95, out mx); r.OwdMax = mx;
                 if (best >= 0) { r.OwdP50 -= best; r.OwdP95 -= best; r.OwdMax -= best; }
                 r.CaptureP95 = Pct(capHist, 0.95, out mx);
+                if (owdAllCount > 0)
+                {
+                    long target = (long)(owdAllCount * 0.95), acc = 0;
+                    for (int i = 0; i < owdAllHist.Length; i++) { acc += owdAllHist[i]; if (acc > target) { r.OwdInP95 = i; break; } }
+                    acc = 0; target = owdAllCount / 2;
+                    for (int i = 0; i < owdAllHist.Length; i++) { acc += owdAllHist[i]; if (acc > target) { r.OwdInP50 = i; break; } }
+                }
+                Array.Clear(owdAllHist, 0, owdAllHist.Length); owdAllCount = 0;
                 r.Stutters = (int)minStutters; r.StutterMaxMs = minStutterMax / 1000.0;
                 Array.Clear(owdHist, 0, owdHist.Length); Array.Clear(capHist, 0, capHist.Length);
                 minStutters = 0; minStutterMax = 0;
