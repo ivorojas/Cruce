@@ -568,6 +568,9 @@ namespace Cruce
         // mouse: it reports its cursor while this window is open, and whichever cursor moved last is the live one.
         int lastLocalX = int.MinValue, lastLocalY;
         long localMovedAt;
+        readonly System.Diagnostics.Stopwatch glide = System.Diagnostics.Stopwatch.StartNew();
+        double gx, gy;
+        bool gliding;
 
         bool CursorOnPeer()
         {
@@ -594,16 +597,21 @@ namespace Cruce
             double x, y;
             if (e.Mode == Mode.Remote)
             {
-                e.GetRemotePos(out x, out y);
+                e.GetRemotePos(out x, out y); gliding = false;
                 x += mOx; y += mOy;
             }
             else if (CursorOnPeer())
             {
-                x = e.PeerCurX + mOx; y = e.PeerCurY + mOy;
+                // Reports arrive ~60 times a second, sometimes bunched by Wi-Fi: glide toward the latest one.
+                double tx = e.PeerCurX + mOx, ty = e.PeerCurY + mOy;
+                double dt = glide.Elapsed.TotalSeconds; glide.Restart();
+                if (!gliding || dt > 0.25 || Math.Abs(tx - gx) + Math.Abs(ty - gy) > 3000) { gx = tx; gy = ty; gliding = true; }
+                else { double a = Math.Min(1, dt / 0.03); gx += (tx - gx) * a; gy += (ty - gy) * a; }
+                x = gx; y = gy;
             }
             else
             {
-                x = lastLocalX; y = lastLocalY;
+                x = lastLocalX; y = lastLocalY; gliding = false;
             }
             Canvas.SetLeft(dot, x * mSc + mTx - 4.5);
             Canvas.SetTop(dot, y * mSc + mTy - 4.5);

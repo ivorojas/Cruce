@@ -100,7 +100,7 @@ namespace Cruce
 
     public sealed class AppController
     {
-        public const string Version = "1.20";
+        public const string Version = "1.21";
 
         readonly Application app;
         public readonly Config Cfg;

@@ -388,7 +388,7 @@ namespace Cruce
 
         void ReportCursor(long now)
         {
-            if (!(peerWatching || reportToPeer) || mode != Mode.Local || now - lastCursorSend < 40000) return;
+            if (!(peerWatching || reportToPeer) || mode != Mode.Local || now - lastCursorSend < 15000) return; // ~60 Hz: the map dot moves smoothly
             var l = link;
             if (l == null || peer == null) return;
             POINT c;
