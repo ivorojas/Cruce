@@ -77,7 +77,7 @@ namespace Cruce
         readonly ILinkHandler h;
         readonly int peerPort;
         readonly IPAddress fixedPeer;
-        public readonly uint Session;
+        public uint Session; // changes whenever we drop the peer, so the other side resets its half of the channel too
 
         PeerInfo peer;
         IPEndPoint lastKnownEp;
@@ -365,9 +365,30 @@ namespace Cruce
             lastCtr = ctr;
         }
 
+        /// <summary>
+        /// A new session id for this side. Both PCs keep counters for the reliable channel; if only one of them
+        /// forgets the other (a timeout seen by one side, or waking from sleep) and the ids stayed the same, the
+        /// other side would keep its old counters and every click, key and crossing would be silently discarded
+        /// while the link looked alive. A new id makes the other side start over as well.
+        /// </summary>
+        uint peerAckMax;
+        int ackRegress;
+
+        /// <summary>Tests: drop the peer the way pre-1.27 did on a one-sided timeout (same session id, counters reset).</summary>
+        public void TestForgetPeer() { lock (gate) { peer = null; ResetChannelLocked(); } }
+
+        void NewSessionLocked()
+        {
+            var r = new byte[4];
+            using (var rng = System.Security.Cryptography.RandomNumberGenerator.Create()) rng.GetBytes(r);
+            uint s = BitConverter.ToUInt32(r, 0) | 1;
+            Session = s == Session ? s + 2 : s;
+        }
+
         void ResetChannelLocked()
         {
             outQ.Clear(); nextRseq = 1;
+            peerAckMax = 0; ackRegress = 0;
             inDelivered = 0; inBuf.Clear();
             hasMove = false; movePending = false; moveSeq = 0;
             anyInMove = false; lastInMoveSeq = 0;
@@ -442,7 +463,7 @@ namespace Cruce
             uint s = r.U32();
             uint dst = r.U32();
             List<Rel> deliver = null;
-            bool doMove = false, sendAck = false, needHello = false;
+            bool doMove = false, sendAck = false, needHello = false, desync = false;
             long stutterIncident = 0;
             int x = 0, y = 0;
             long now = NowUs();
@@ -462,6 +483,18 @@ namespace Cruce
                     uint echo = r.U32();
                     uint hold = r.U32();
                     int flags = r.U8();
+
+                    // The other PC acknowledges events we never sent: it still has counters from a session this side
+                    // already dropped. Start over on both sides (the new session id makes it reset too).
+                    // ...or its acknowledgements went backwards and stay there: it started over and this side didn't
+                    // (20 packets in a row rules out plain UDP reordering).
+                    if ((int)(ack - peerAckMax) < 0) ackRegress++; else { peerAckMax = ack; ackRegress = 0; }
+                    if ((int)(ack - (nextRseq - 1)) > 0 || ackRegress >= 20)
+                    {
+                        peer = null; ResetChannelLocked(); NewSessionLocked();
+                        desync = true;
+                        goto unlocked;
+                    }
 
                     if (outQ.Count > 0) outQ.RemoveAll(q => (int)(q.Seq - ack) <= 0);
 
@@ -544,6 +577,14 @@ namespace Cruce
                         prevMoveRx = now;
                     }
                 }
+            }
+        unlocked:
+            if (desync)
+            {
+                Log.Info("enlace desincronizado (la otra PC conservaba una sesión que esta ya había cerrado): lo reinicio de los dos lados");
+                h.OnPeerDown();
+                SendHello(new[] { ep }, false);
+                return;
             }
             if (stutterIncident > 0) Flight.Incident("tiron", string.Format("el movimiento se trabó {0:0} ms (la red entregó los paquetes amontonados)", stutterIncident / 1000.0));
             if (needHello) { SendHello(new[] { ep }, false); return; }
@@ -660,6 +701,7 @@ namespace Cruce
                     long before = NowUs();
                     Thread.Sleep(hiRes ? 1 : 15);
                     long now = NowUs();
+                    bool stalled = now - before > 3000000; // the PC slept: whatever the peer remembers of this session is stale
                     if (now - before > 100000 && peer != null) Interlocked.Increment(ref Diag.Stalls);
                     if (now - before > 100000 && peer != null) Log.Info("FRENADO: el sistema pausó a Cruce {0:0} ms (CPU saturada, suspensión o ahorro de energía)", (now - before) / 1000.0);
                     bool bcast = false, helloPeer = false, down = false;
@@ -676,7 +718,7 @@ namespace Cruce
                             if (now - lastDataSend >= ka) send = true;
                             if (send) SendDataLocked(now);
                             if (now - lastHelloSend >= 2000000) { helloPeer = true; peerEp = peer.Ep; }
-                            if (now - Interlocked.Read(ref lastHeard) > 3500000) down = true;
+                            if (stalled || now - Interlocked.Read(ref lastHeard) > 3500000) down = true;
                         }
                         else if (now - lastHelloSend >= 1000000) bcast = true;
                     }
@@ -684,10 +726,10 @@ namespace Cruce
                     {
                         lock (gate)
                         {
-                            down = peer != null && NowUs() - Interlocked.Read(ref lastHeard) > 3500000;
-                            if (down) { peer = null; ResetChannelLocked(); }
+                            down = peer != null && (stalled || NowUs() - Interlocked.Read(ref lastHeard) > 3500000);
+                            if (down) { peer = null; ResetChannelLocked(); NewSessionLocked(); }
                         }
-                        if (down) { Log.Info("peer timed out"); h.OnPeerDown(); }
+                        if (down) { Log.Info(stalled ? "la PC estuvo suspendida: reinicio el enlace con la otra PC" : "peer timed out"); h.OnPeerDown(); }
                     }
                     else if (helloPeer) SendHello(new[] { peerEp }, true);
                     if (bcast) SendHello(DiscoveryTargets(), false);

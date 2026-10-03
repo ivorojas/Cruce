@@ -229,6 +229,16 @@ namespace Cruce
                     List<string> got2;
                     lock (hb2.Events) got2 = hb2.Events.ToList();
                     Check(got2.SequenceEqual(exp2), string.Format("tras reconectar: {0}/{1} eventos en orden", got2.Count, exp2.Count));
+
+                    // One side forgets the other without the other noticing (a one-sided timeout, or waking from
+                    // sleep): the counters no longer match and, before 1.27, every event was silently discarded
+                    // while the link looked alive. It must notice and start over on both sides by itself.
+                    b2.TestForgetPeer();
+                    Thread.Sleep(4000);
+                    int a0 = ha.Count, b0 = hb2.Count;
+                    for (int i = 0; i < 40; i++) { a.QueueReliable(Ev.Key, BitConverter.GetBytes(20000 + i)); b2.QueueReliable(Ev.Key, BitConverter.GetBytes(30000 + i)); }
+                    WaitFor(() => hb2.Count - b0 >= 40 && ha.Count - a0 >= 40, 6000);
+                    Check(hb2.Count - b0 == 40 && ha.Count - a0 == 40, string.Format("una PC olvidó a la otra sin avisar: el enlace se rearma solo ({0}/40 y {1}/40 eventos después)", hb2.Count - b0, ha.Count - a0));
                 }
                 finally { b2.Dispose(); }
 

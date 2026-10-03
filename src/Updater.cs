@@ -13,7 +13,7 @@ namespace Cruce
     /// </summary>
     public static class Updater
     {
-        const string Api = "https://api.github.com/repos/ivorojas/Cruce/releases/latest";
+        const string Latest = "https://github.com/ivorojas/Cruce/releases/latest";
         public static volatile string Status = "";
         static int busy;
 
@@ -24,12 +24,11 @@ namespace Cruce
             return new Version(int.Parse(m.Groups[1].Value), int.Parse(m.Groups[2].Value), m.Groups[3].Success ? int.Parse(m.Groups[3].Value) : 0);
         }
 
-        static string etag, lastJson, lastError;
+        static string lastError;
 
         /// <summary>
         /// Checks GitHub and installs a newer release. <paramref name="manual"/> = the button (shows every step);
-        /// automatic checks run every 2 minutes and stay silent unless there is something new. They send the last
-        /// ETag, so "nothing changed" is a tiny 304 answer that GitHub doesn't count against its rate limit.
+        /// automatic checks run every 2 minutes and stay silent unless there is something new.
         /// canInstall is asked right before swapping; notify gets the "closing to update" balloon text.
         /// </summary>
         public static void CheckAsync(bool manual, Func<bool> canInstall, Action<string> notify, Action restart)
@@ -41,30 +40,23 @@ namespace Cruce
                 {
                     if (manual) Status = L.T("Buscando actualizaciones…");
                     ServicePointManager.SecurityProtocol |= SecurityProtocolType.Tls12;
-                    string json;
-                    var req = (HttpWebRequest)WebRequest.Create(Api);
+                    // The releases page redirects ".../releases/latest" to ".../releases/tag/vX": one tiny HEAD request,
+                    // and unlike the REST API it has no 60-per-hour limit (two PCs polling shared that and hit 403).
+                    string tag = "";
+                    var req = (HttpWebRequest)WebRequest.Create(Latest);
+                    req.Method = "HEAD";
+                    req.AllowAutoRedirect = false;
                     req.UserAgent = "Cruce-updater";
                     req.Timeout = 15000;
-                    if (!manual && etag != null && lastJson != null) req.Headers[HttpRequestHeader.IfNoneMatch] = etag;
-                    try
+                    using (var resp = (HttpWebResponse)req.GetResponse())
                     {
-                        using (var resp = (HttpWebResponse)req.GetResponse())
-                        using (var rd = new StreamReader(resp.GetResponseStream()))
-                        {
-                            json = rd.ReadToEnd();
-                            etag = resp.Headers[HttpResponseHeader.ETag];
-                            lastJson = json;
-                        }
+                        string loc = resp.Headers[HttpResponseHeader.Location] ?? "";
+                        var mt = Regex.Match(loc, @"/releases/tag/([^/?#]+)");
+                        if (mt.Success) tag = Uri.UnescapeDataString(mt.Groups[1].Value);
                     }
-                    catch (WebException wex)
-                    {
-                        var r304 = wex.Response as HttpWebResponse;
-                        if (r304 == null || r304.StatusCode != HttpStatusCode.NotModified) throw;
-                        json = lastJson; // unchanged since the last check
-                    }
+                    if (tag.Length == 0) throw new WebException("GitHub no dijo cuál es la última versión");
                     if (lastError != null) { Log.Info("actualizaciones: GitHub responde de nuevo"); lastError = null; }
-                    var tag = Regex.Match(json, "\"tag_name\"\\s*:\\s*\"([^\"]+)\"").Groups[1].Value;
-                    var url = Regex.Match(json, "\"browser_download_url\"\\s*:\\s*\"([^\"]+/Cruce\\.exe)\"").Groups[1].Value;
+                    string url = "https://github.com/ivorojas/Cruce/releases/download/" + tag + "/Cruce.exe";
                     var latest = Parse(tag);
                     var current = Parse(AppController.Version);
                     if (latest <= current || url.Length == 0) { if (manual) Status = L.F("Estás en la última versión ({0})", AppController.Version); return; }
