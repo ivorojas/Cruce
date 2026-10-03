@@ -134,6 +134,8 @@ namespace Cruce
             { "No se encontró el repositorio (¿es privado?)", "Repository not found (is it private?)" },
             { "Sin conexión a GitHub", "Can't reach GitHub" },
             { "Error al actualizar: {0}", "Update error: {0}" },
+            { "Cruce se actualiza a {0}: se cierra y se vuelve a abrir solo en unos segundos", "Cruce is updating to {0}: it will close and reopen by itself in a few seconds" },
+            { "Cruce se actualizó a {0} ✓", "Cruce updated to {0} ✓" },
             { "No se pudo crear la tarea de inicio (código {0}).", "Couldn't create the startup task (code {0})." },
             { "No se pudo quitar la tarea (código {0}).", "Couldn't remove the startup task (code {0})." },
             { "Cancelado.", "Cancelled." },

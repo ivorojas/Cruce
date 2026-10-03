@@ -18,6 +18,7 @@ namespace Cruce
     public static class Program
     {
         static Mutex mutex;
+        public static string UpdatedTo; // "--updated vX": restarted by the updater, say so in a balloon
 
         [DllImport("kernel32.dll")]
         static extern bool AttachConsole(int pid);
@@ -54,6 +55,8 @@ namespace Cruce
                 if (!args.Contains("--tray")) try { using (var ev = EventWaitHandle.OpenExisting(@"Local\Cruce.Show")) ev.Set(); } catch { }
                 return 0;
             }
+            int ui = Array.IndexOf(args, "--updated");
+            if (ui >= 0 && ui + 1 < args.Length) UpdatedTo = args[ui + 1];
             if (!args.Contains("--no-handoff") && HandOffToInstalled(args)) return 0;
 
             AppDomain.CurrentDomain.UnhandledException += (s, e) =>
@@ -158,7 +161,7 @@ namespace Cruce
 
     public sealed class AppController
     {
-        public const string Version = "1.25";
+        public const string Version = "1.26";
 
         readonly Application app;
         public readonly Config Cfg;
@@ -205,8 +208,9 @@ namespace Cruce
             RestartLink();
 
             tray = new Tray(this);
+            if (Program.UpdatedTo != null) Notify(L.F("Cruce se actualizó a {0} ✓", Program.UpdatedTo));
             var upd = new DispatcherTimer { Interval = TimeSpan.FromSeconds(20) };
-            upd.Tick += (s, e) => { upd.Interval = TimeSpan.FromHours(3); CheckUpdates(true); };
+            upd.Tick += (s, e) => { upd.Interval = TimeSpan.FromMinutes(2); CheckUpdates(false); }; // new releases arrive within ~2 min
             upd.Start();
             ThreadPool.QueueUserWorkItem(_ => { Thread.Sleep(15000); Autostart.SyncInstalled(); });
             var qx = new DispatcherTimer { Interval = TimeSpan.FromSeconds(20) };
@@ -385,9 +389,9 @@ namespace Cruce
             }) { IsBackground = true, Priority = ThreadPriority.BelowNormal, Name = "cruce-uiwatch" }.Start();
         }
 
-        public void CheckUpdates(bool install)
+        public void CheckUpdates(bool manual)
         {
-            Updater.CheckAsync(install, () => Engine.Mode == Mode.Local, () => app.Dispatcher.BeginInvoke(new Action(Exit)));
+            Updater.CheckAsync(manual, () => Engine.Mode == Mode.Local, Notify, () => app.Dispatcher.BeginInvoke(new Action(Exit)));
         }
 
         public void RestartElevated()
