@@ -195,6 +195,16 @@ namespace Cruce
                         bool ok = Relay(app, payload);
                         return js.Serialize(ok ? new Dictionary<string, object> { { "ok", true } } : new Dictionary<string, object> { { "ok", false }, { "error", "no se pudo enviar" } });
                     }
+                case "peerlog":
+                    {
+                        // Diagnostics: copy the other PC's log here (%APPDATA%\Cruce\otra-pc\cruce-<pc>.log).
+                        var cs = clip != null ? clip() : null;
+                        var p = engine != null ? engine.Peer : null;
+                        if (cs == null || p == null) return js.Serialize(new Dictionary<string, object> { { "ok", false }, { "error", "peer desconectado" } });
+                        string path = Path.Combine(Config.Dir, "otra-pc", "cruce-" + p.Name + ".log");
+                        string err = cs.FetchPeerLog(path);
+                        return js.Serialize(err == null ? new Dictionary<string, object> { { "ok", true }, { "path", path } } : new Dictionary<string, object> { { "ok", false }, { "error", err } });
+                    }
                 default:
                     return js.Serialize(new Dictionary<string, object> { { "ok", false }, { "error", "comando desconocido: " + cmd } });
             }

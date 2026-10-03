@@ -360,6 +360,71 @@ namespace Cruce
             return true;
         }
 
+        // ---- remote diagnostics: fetch the other PC's log (it is served by this TCP side, so it works even if
+        // the other PC's input engine were stuck)
+        const byte K_LOGREQ = 18, K_LOGDATA = 19;
+
+        void WriteFrameNow(Stream s, byte kind, byte[] data)
+        {
+            var plain = new byte[1 + data.Length];
+            plain[0] = kind;
+            Buffer.BlockCopy(data, 0, plain, 1, data.Length);
+            var sealedFrame = crypto.Seal(plain, plain.Length);
+            s.Write(BitConverter.GetBytes(sealedFrame.Length), 0, 4);
+            s.Write(sealedFrame, 0, sealedFrame.Length);
+            s.Flush();
+        }
+
+        static byte[] LogTail()
+        {
+            var ms = new MemoryStream();
+            Action<string, long> add = (path, max) =>
+            {
+                try
+                {
+                    using (var fs = new FileStream(path, FileMode.Open, FileAccess.Read, FileShare.ReadWrite | FileShare.Delete))
+                    {
+                        fs.Position = Math.Max(0, fs.Length - max);
+                        fs.CopyTo(ms);
+                    }
+                }
+                catch { }
+            };
+            string p = Log.PathName;
+            if (p != null) { add(p + ".1", 3 << 20); add(p, 6 << 20); }
+            return ms.ToArray();
+        }
+
+        /// <summary>Downloads the other PC's log (last ~9 MB) to <paramref name="savePath"/>. Null on success, else the error.</summary>
+        public string FetchPeerLog(string savePath)
+        {
+            var addr = peerAddr();
+            if (addr == null) return "la otra PC no está conectada";
+            try
+            {
+                using (var tcp = new TcpClient())
+                {
+                    tcp.NoDelay = true;
+                    var ar = tcp.BeginConnect(addr.Address, addr.Port, null, null);
+                    if (!ar.AsyncWaitHandle.WaitOne(3000)) return "no pude conectar con la otra PC";
+                    tcp.EndConnect(ar);
+                    tcp.ReceiveTimeout = 30000; tcp.SendTimeout = 30000;
+                    QosBackground(tcp.Client);
+                    using (var s = tcp.GetStream())
+                    {
+                        WriteFrameNow(s, K_LOGREQ, new byte[0]);
+                        var f = ReadFrame(s);
+                        if (f == null || f.Length == 0 || f[0] != K_LOGDATA) return "la otra PC no mandó su registro (necesita Cruce 1.25 o más nuevo)";
+                        Directory.CreateDirectory(Path.GetDirectoryName(savePath));
+                        using (var fs = File.Create(savePath)) fs.Write(f, 1, f.Length - 1);
+                        Log.Info("registro de la otra PC guardado en {0} ({1:0} KB)", savePath, (f.Length - 1) / 1024.0);
+                    }
+                }
+                return null;
+            }
+            catch (Exception ex) { return ex.Message; }
+        }
+
         byte[] ReadFrame(Stream s)
         {
             var lb = new byte[4];
@@ -383,6 +448,13 @@ namespace Cruce
                     var s = c.GetStream();
                     var first = ReadFrame(s);
                     if (first == null || first.Length == 0) return;
+                    if (first[0] == K_LOGREQ)
+                    {
+                        var tail = LogTail();
+                        Log.Info("la otra PC pidió este registro: le mando {0:0} KB", tail.Length / 1024.0);
+                        WriteFrameNow(s, K_LOGDATA, tail);
+                        return;
+                    }
                     if (first[0] == K_APPMSG) { Interlocked.Increment(ref appIn); Interlocked.Add(ref appInBytes, first.Length); } // summarized once a minute
                     else Log.Info("portapapeles recibido: tipo {0}, {1} bytes", first[0] == K_TEXT ? "texto" : first[0] == K_IMAGE ? "imagen" : first[0] == K_PASTE ? "pegado remoto" : first[0] == K_DROP ? "arrastre" : "archivos", first.Length - 1);
                     switch (first[0])
