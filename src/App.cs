@@ -11,6 +11,8 @@ using System.Windows;
 using System.Windows.Threading;
 using Forms = System.Windows.Forms;
 
+[assembly: System.Reflection.AssemblyFileVersion(Cruce.AppController.Version + ".0")] // lets another copy read our version
+
 namespace Cruce
 {
     public static class Program
@@ -49,9 +51,10 @@ namespace Cruce
             }
             if (!owner)
             {
-                try { using (var ev = EventWaitHandle.OpenExisting(@"Local\Cruce.Show")) ev.Set(); } catch { }
+                if (!args.Contains("--tray")) try { using (var ev = EventWaitHandle.OpenExisting(@"Local\Cruce.Show")) ev.Set(); } catch { }
                 return 0;
             }
+            if (!args.Contains("--no-handoff") && HandOffToInstalled(args)) return 0;
 
             AppDomain.CurrentDomain.UnhandledException += (s, e) =>
             {
@@ -83,12 +86,67 @@ namespace Cruce
             catch (Exception ex) { Log.Info("modo eficiencia: {0}", ex.Message); }
         }
 
+        static void Hidden(string cmdArgs)
+        {
+            Process.Start(new ProcessStartInfo("cmd.exe", cmdArgs) { CreateNoWindow = true, UseShellExecute = false, WindowStyle = ProcessWindowStyle.Hidden });
+        }
+
+        /// <summary>
+        /// Started without admin (double-clicked, an old copy, an update of a non-admin copy...) while the
+        /// "start with Windows" task exists: let the task start the installed copy, which runs as admin with no UAC
+        /// prompt, and leave. If that doesn't work this exe starts again with --no-handoff, so Cruce never ends up
+        /// missing. A marker file stops loops (e.g. a task that can't elevate on a standard account).
+        /// </summary>
+        static bool HandOffToInstalled(string[] args)
+        {
+            try
+            {
+                if (Autostart.IsAdmin() || !Autostart.IsEnabled()) return false;
+                string mark = System.IO.Path.Combine(System.IO.Path.GetTempPath(), "cruce-handoff.txt");
+                if (System.IO.File.Exists(mark) && (DateTime.Now - System.IO.File.GetLastWriteTime(mark)).TotalSeconds < 90) return false;
+                System.IO.File.WriteAllText(mark, DateTime.Now.ToString("o"));
+                string exe = Process.GetCurrentProcess().MainModule.FileName;
+                bool tray = args.Contains("--tray");
+                Log.Info("Cruce {0} arrancó sin admin desde {1}: lo paso a la copia instalada (con admin, vía la tarea de inicio)", AppController.Version, exe);
+                mutex.ReleaseMutex(); mutex.Dispose(); mutex = null;
+                // Start the task; a few seconds later, launch this exe again: if the task's Cruce is running it just
+                // shows its window (or does nothing with --tray); if not, this one runs normally.
+                Hidden("/c timeout /t 1 /nobreak >nul & schtasks /run /tn Cruce >nul 2>&1 & timeout /t 5 /nobreak >nul & start \"\" \"" + exe + "\" --no-handoff" + (tray ? " --tray" : ""));
+                Thread.Sleep(300);
+                return true;
+            }
+            catch (Exception ex) { Log.Info("no pude pasar a la copia instalada: {0}", ex.Message); return false; }
+        }
+
+        /// <summary>
+        /// WPF closes the app as soon as Windows *asks* whether the session may end, even if the logoff/shutdown is then
+        /// cancelled (Oct 1: OBS and Dictado blocked it and Cruce was simply gone). Leave a small watcher behind: if
+        /// the session is still alive and Cruce isn't running, it starts it again (through the admin task if any).
+        /// </summary>
+        static void ArmRelaunchIfSessionSurvives()
+        {
+            try
+            {
+                string exe = Process.GetCurrentProcess().MainModule.FileName;
+                string start = Autostart.IsEnabled() ? "schtasks /run /tn Cruce >nul 2>&1" : "start \"\" \"" + exe + "\" --tray";
+                Hidden("/c for /l %i in (1,1,45) do @(timeout /t 20 /nobreak >nul & (tasklist /fi \"imagename eq Cruce.exe\" /nh | find /i \"Cruce.exe\" >nul || (" + start + " & exit)))");
+            }
+            catch (Exception ex) { Log.Info("no pude preparar el rearranque: {0}", ex.Message); }
+        }
+
         [MethodImpl(MethodImplOptions.NoInlining)]
         static int RunApp(string[] args)
         {
             var app = new Application();
             app.ShutdownMode = ShutdownMode.OnExplicitShutdown;
             app.DispatcherUnhandledException += (s, e) => { Log.Error(e.Exception, "ui"); e.Handled = true; };
+            app.SessionEnding += (s, e) =>
+            {
+                Log.Info("Windows pidió cerrar la sesión ({0}): Cruce se cierra; si el cierre se cancela, vuelve solo", e.ReasonSessionEnding == ReasonSessionEnding.Shutdown ? "apagado/reinicio" : "cerrar sesión");
+                ArmRelaunchIfSessionSurvives();
+                try { Presence.Stop(); CursorHider.Restore(); } catch { }
+                Thread.Sleep(150); // let the log line reach the file
+            };
             var ctl = new AppController(app);
             ctl.Start(!args.Contains("--tray"));
             app.Run();
@@ -100,7 +158,7 @@ namespace Cruce
 
     public sealed class AppController
     {
-        public const string Version = "1.23";
+        public const string Version = "1.24";
 
         readonly Application app;
         public readonly Config Cfg;
@@ -152,7 +210,7 @@ namespace Cruce
             upd.Start();
             ThreadPool.QueueUserWorkItem(_ => { Thread.Sleep(15000); Autostart.SyncInstalled(); });
             var qx = new DispatcherTimer { Interval = TimeSpan.FromSeconds(20) };
-            qx.Tick += (s, e) => QosExperiment();
+            qx.Tick += (s, e) => QosPolicy();
             qx.Start();
             win = new MainWindow(this);
             if (show || string.IsNullOrEmpty(Cfg.Secret)) ShowWindow();
@@ -205,21 +263,18 @@ namespace Cruce
         }
 
         /// <summary>
-        /// Until Oct 2 the Wi-Fi PC alternates voice priority (QoS) on the first half of each hour and off on the
-        /// second half. The other PC measures when those packets arrive (llegada_red_*), so the report can tell
-        /// whether the laptop's ~50 ms stretches come from the priority marking. After that, QoS stays on.
+        /// Voice priority (WMM) only where it helps: the Sep 30 – Oct 1 A/B on the laptop (QoS on half of every hour,
+        /// off the other half, ~700 minutes each) showed its packets arriving 50 ms late in 30% of the minutes with
+        /// QoS on and in 0% with it off. So a PC on Wi-Fi sends as normal traffic; a wired PC keeps voice priority.
         /// </summary>
-        static readonly DateTime QosExperimentUntil = new DateTime(2026, 10, 2);
-        bool qxLogged;
+        static bool WantQos() { return !(WifiNative.Available && WifiNative.Connected); }
 
-        void QosExperiment()
+        void QosPolicy()
         {
             var l = link;
             if (l == null) return;
-            bool wifi = WifiNative.Available && WifiNative.Connected;
-            bool on = !(wifi && DateTime.Now < QosExperimentUntil && DateTime.Now.Minute >= 30);
-            if (wifi && DateTime.Now < QosExperimentUntil && !qxLogged) { qxLogged = true; Log.Info("experimento QoS: hasta el {0:d} la prioridad de voz va prendida de :00 a :29 y apagada de :30 a :59", QosExperimentUntil); }
-            if (on != l.QosEnabled) l.SetQos(on);
+            bool on = WantQos();
+            if (on != l.QosEnabled) { l.SetQos(on); Log.Info("prioridad de voz (QoS): {0}", on ? "activa (cable)" : "apagada: en WiFi agrega demoras de ~50 ms"); }
         }
 
         public void RestartLink()
@@ -244,6 +299,7 @@ namespace Cruce
                     catch (SocketException) { if (attempt >= 20) throw; Log.Info("puerto {0} ocupado, reintento {1}", Cfg.Port, attempt + 1); Thread.Sleep(500); }
                 }
                 l.MinMoveIntervalUs = Cfg.MoveIntervalUs;
+                l.SetQos(WantQos()); // before the first peer shows up, so a Wi-Fi PC never marks packets as voice
                 Engine.AttachLink(l);
                 l.Start();
                 link = l;

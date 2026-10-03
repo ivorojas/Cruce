@@ -101,6 +101,10 @@ namespace Cruce
                 if (!File.Exists(target) || !IsEnabled()) return;
                 byte[] a = File.ReadAllBytes(exe), b = File.ReadAllBytes(target);
                 if (a.Length == b.Length && System.Linq.Enumerable.SequenceEqual(a, b)) return;
+                // Only ever upgrade it: an old copy started by hand must not overwrite a newer installed one.
+                Version mine = new Version(AppController.Version), theirs = new Version(0, 0);
+                try { var fv = FileVersionInfo.GetVersionInfo(target).FileVersion; if (!string.IsNullOrEmpty(fv)) theirs = new Version(fv); } catch { }
+                if (theirs.Major > 0 && new Version(theirs.Major, theirs.Minor) >= mine) return;
                 File.Copy(exe, target, true);
                 Log.Info("inicio con Windows: la copia instalada ({0}) estaba vieja; la actualicé a esta versión", target);
             }
