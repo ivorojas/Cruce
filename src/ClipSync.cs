@@ -140,9 +140,24 @@ namespace Cruce
             CleanupOld();
         }
 
+        /// <summary>The app that just copied (or a clipboard manager) often still holds the clipboard for a few ms:
+        /// "can't open clipboard". Try again shortly instead of losing that copy.</summary>
+        void ReadClip(int attempt)
+        {
+            try { OnLocalChange(); }
+            catch (System.Runtime.InteropServices.COMException ex)
+            {
+                if (attempt >= 6) { Log.Info("portapapeles: otra app lo tuvo ocupado y no pude leerlo ({0})", ex.Message); return; }
+                var t = new DispatcherTimer { Interval = TimeSpan.FromMilliseconds(60 + 40 * attempt) };
+                t.Tick += (s, e) => { t.Stop(); ReadClip(attempt + 1); };
+                t.Start();
+            }
+            catch (Exception ex) { Log.Error(ex, "clip read"); }
+        }
+
         IntPtr WndProc(IntPtr hwnd, int msg, IntPtr w, IntPtr l, ref bool handled)
         {
-            if (msg == Native.WM_CLIPBOARDUPDATE) { try { OnLocalChange(); } catch (Exception ex) { Log.Error(ex, "clip read"); } }
+            if (msg == Native.WM_CLIPBOARDUPDATE) ReadClip(0);
             return IntPtr.Zero;
         }
 

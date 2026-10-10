@@ -57,6 +57,11 @@ namespace Cruce
         long activeUs, lastTickUs;
         long lastMonCheck, lastSummary, lastCrossings, takeovers, enteredAt, lastHookCheck, lastSlowLog;
         volatile int lastHookTick = Environment.TickCount;
+        POINT hookCheckPos;
+        bool haveHookCheckPos;
+        int hookCheckTick;
+        long lastHookIncident, lastOtherInputLog;
+        [DllImport("user32.dll")] static extern short GetAsyncKeyState(int vk);
         const uint WM_REHOOK = 0x8001;
         Thread hookThread;
         uint hookThreadId;
@@ -1163,17 +1168,40 @@ namespace Cruce
                 if (GetLastInputInfo(ref lii) && (int)(lii.dwTime - (uint)lastHookTick) > 1500 && hookThreadId != 0)
                 {
                     int gap = (int)(lii.dwTime - (uint)lastHookTick);
+                    // Windows also counts gamepads, pens and touch as "input", and none of that goes through the mouse or
+                    // keyboard hooks. Only if the pointer moved or a key/button is down did the hooks really miss something
+                    // (a night of playing with a controller used to mean a re-hook every 3 s and thousands of false alarms).
+                    POINT cur;
+                    Native.GetCursorPos(out cur);
+                    // ...and only counts if the hooks saw nothing at all since the previous check (otherwise a mouse move the
+                    // hook did see, followed by controller input, would look like a miss).
+                    bool hookQuiet = haveHookCheckPos && (int)(hookCheckTick - lastHookTick) >= 0;
+                    bool pointerMoved = hookQuiet && mode == Mode.Local && (cur.X != hookCheckPos.X || cur.Y != hookCheckPos.Y);
+                    bool keyDown = false;
+                    if (hookQuiet) for (int vk = 1; vk < 255 && !keyDown; vk++) if ((GetAsyncKeyState(vk) & 0x8000) != 0) keyDown = true;
                     if (gap > 60000)
+                    {
                         // Long idle, then input Cruce can't see: typing the password on the lock screen (a secure desktop). Normal.
                         Log.Info("volviste después de {0:0} min sin usar la PC (pantalla bloqueada o segura). Reengancho por las dudas.", gap / 60000.0);
-                    else
+                        Native.PostThreadMessage(hookThreadId, WM_REHOOK, IntPtr.Zero, IntPtr.Zero);
+                    }
+                    else if (pointerMoved || keyDown)
                     {
-                        Log.Info("HOOK MUERTO: hubo input que la captura no vio ({0} ms). En primer plano: {1}. Reenganchando.", gap, ForegroundInfo());
-                        Flight.Incident("hook_muerto", "Windows dejó de pasarle el mouse/teclado a Cruce (pantalla segura, UAC o hook desenganchado)");
+                        Log.Info("HOOK MUERTO: hubo {0} que la captura no vio ({1} ms). En primer plano: {2}. Reenganchando.", pointerMoved ? "movimiento del mouse" : "teclas/botones", gap, ForegroundInfo());
+                        if (now - lastHookIncident > 600000000) { lastHookIncident = now; Flight.Incident("hook_muerto", "Windows dejó de pasarle el mouse/teclado a Cruce (pantalla segura, UAC o hook desenganchado)"); }
+                        Native.PostThreadMessage(hookThreadId, WM_REHOOK, IntPtr.Zero, IntPtr.Zero);
+                    }
+                    else if (now - lastOtherInputLog > 1800000000)
+                    {
+                        lastOtherInputLog = now;
+                        Log.Info("hay actividad de otro dispositivo (joystick, lápiz o táctil; en primer plano: {0}): no pasa por Cruce y no hace falta reenganchar", ForegroundInfo());
                     }
                     lastHookTick = Environment.TickCount;
-                    Native.PostThreadMessage(hookThreadId, WM_REHOOK, IntPtr.Zero, IntPtr.Zero);
                 }
+                POINT c2;
+                Native.GetCursorPos(out c2);
+                hookCheckPos = c2; haveHookCheckPos = true; // where the pointer was at this check, to compare at the next one
+                hookCheckTick = Environment.TickCount;
             }
             if (lastSummary == 0) lastSummary = now;
             if (now - lastSummary > 60000000)

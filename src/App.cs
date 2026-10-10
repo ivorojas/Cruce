@@ -161,7 +161,7 @@ namespace Cruce
 
     public sealed class AppController
     {
-        public const string Version = "1.27";
+        public const string Version = "1.28";
 
         readonly Application app;
         public readonly Config Cfg;
@@ -273,8 +273,35 @@ namespace Cruce
         /// </summary>
         static bool WantQos() { return !(WifiNative.Available && WifiNative.Connected); }
 
+        /// <summary>Mouse Without Borders running next to Cruce: both grab the mouse and inject into each other (the
+        /// pointer flips between PCs every second). Shown in the window, plus one balloon when it appears.</summary>
+        public volatile bool MwbRunning;
+
+        void CheckMwb()
+        {
+            ThreadPool.QueueUserWorkItem(_ =>
+            {
+                bool on = false;
+                try
+                {
+                    var ps = Process.GetProcessesByName("MouseWithoutBorders");
+                    on = ps.Length > 0;
+                    foreach (var p in ps) p.Dispose();
+                }
+                catch { }
+                if (on && !MwbRunning)
+                {
+                    Log.Info("AVISO: Mouse Without Borders está abierto en esta PC: se pelea con Cruce por el mouse y el teclado");
+                    Notify(L.T("Mouse Without Borders está abierto: cerralo, se pelea con Cruce por el mouse"));
+                }
+                else if (!on && MwbRunning) Log.Info("Mouse Without Borders se cerró");
+                MwbRunning = on;
+            });
+        }
+
         void QosPolicy()
         {
+            CheckMwb();
             var l = link;
             if (l == null) return;
             bool on = WantQos();
