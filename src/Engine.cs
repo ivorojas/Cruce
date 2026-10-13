@@ -143,7 +143,10 @@ namespace Cruce
             hookThread.Start();
             ready.WaitOne(3000);
             if (!HooksOk) Log.Info("hook install failed");
+            new Thread(AppLagLoop) { IsBackground = true, Priority = ThreadPriority.BelowNormal, Name = "cruce-applag" }.Start();
         }
+
+        volatile bool disposed;
 
         IntPtr MouseProc(int nCode, IntPtr w, IntPtr l)
         {
@@ -1246,10 +1249,43 @@ namespace Cruce
             catch (Exception ex) { return "desconocido (" + ex.Message + ")"; }
         }
 
+        // ---- is the program being driven keeping up? The network and the injection can be perfect and the pointer
+        // still feel laggy because the app in front can't digest the input (that is how the "no coalesce" bug hid:
+        // every Cruce metric was fine). While this PC is being controlled, ask the foreground window for an empty
+        // reply 4 times a second, from a low-priority thread, and keep the worst answer time of the minute.
+        [DllImport("user32.dll")] static extern IntPtr SendMessageTimeout(IntPtr h, uint msg, IntPtr w, IntPtr l, uint flags, uint timeoutMs, out IntPtr result);
+        long appLagMaxMs, lastAppLagLog;
+
+        void AppLagLoop()
+        {
+            while (!disposed)
+            {
+                Thread.Sleep(250);
+                if (mode != Mode.Controlled) continue;
+                try
+                {
+                    IntPtr fg = GetForegroundWindow(), res;
+                    if (fg == IntPtr.Zero) continue;
+                    long t0 = System.Diagnostics.Stopwatch.GetTimestamp();
+                    SendMessageTimeout(fg, 0 /* WM_NULL */, IntPtr.Zero, IntPtr.Zero, 0x2 /* ABORTIFHUNG */, 2000, out res);
+                    long ms = (System.Diagnostics.Stopwatch.GetTimestamp() - t0) * 1000 / System.Diagnostics.Stopwatch.Frequency;
+                    if (ms > Interlocked.Read(ref appLagMaxMs)) Interlocked.Exchange(ref appLagMaxMs, ms);
+                    long now = Link.NowUs();
+                    if (ms >= 150 && now - lastAppLagLog > 10000000)
+                    {
+                        lastAppLagLog = now;
+                        Log.Info("APP LENTA: {0} tardó {1} ms en responder mientras la manejan desde la otra PC (el lag no es de la red)", ForegroundInfo(), ms);
+                    }
+                }
+                catch { }
+            }
+        }
+
         void BuildMinute()
         {
             var lk2 = link;
             var row = new MinuteRow { Time = DateTime.Now, Pc = cfg.Name };
+            row.AppLagMaxMs = (int)Interlocked.Exchange(ref appLagMaxMs, 0);
             double cpuSys, cpuApp;
             Diag.TakeCpu(out cpuSys, out cpuApp);
             int gwCount, gwFails; double gwAvg; long gwP95, gwMax;
@@ -1285,6 +1321,7 @@ namespace Cruce
 
         public void Dispose()
         {
+            disposed = true;
             lock (gate) DropSessionLocked();
             if (hookThreadId != 0) Native.PostThreadMessage(hookThreadId, Native.WM_QUIT, IntPtr.Zero, IntPtr.Zero);
             if (hookThread != null) hookThread.Join(1000);

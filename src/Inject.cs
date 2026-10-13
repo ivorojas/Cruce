@@ -53,7 +53,10 @@ namespace Cruce
             Send(i);
         }
 
-        public static void Move(int x, int y) { Mouse(x, y, MOVE | ABS | VDESK | NOCOALESCE, 0); }
+        // No MOUSEEVENTF_MOVE_NOCOALESCE: with it Windows delivers every single move to the app instead of only the
+        // latest position, so anything that does real work per move (Explorer's selection rectangle, dragging
+        // windows) falls further and further behind a 500-1000 Hz stream. A real mouse is coalesced too.
+        public static void Move(int x, int y) { Mouse(x, y, MOVE | ABS | VDESK, 0); }
 
         public static void Button(int b, bool down, int x, int y)
         {
