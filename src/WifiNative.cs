@@ -114,10 +114,25 @@ namespace Cruce
             }
         }
 
+        /// <summary>
+        /// Windows 11 only lets apps with location permission read Wi-Fi details: with location services off, every
+        /// query fails with "access denied" and Cruce can't see the band, the signal or keep the laptop on 5 GHz.
+        /// </summary>
+        public static volatile bool AccessDenied;
+
         static void Poll()
         {
             int size; IntPtr data;
-            if (WlanQueryInterface(handle, ref iface, OP_CONNECTION, IntPtr.Zero, out size, out data, IntPtr.Zero) == 0)
+            int qr = WlanQueryInterface(handle, ref iface, OP_CONNECTION, IntPtr.Zero, out size, out data, IntPtr.Zero);
+            bool denied = qr == 5;
+            if (denied != AccessDenied)
+            {
+                AccessDenied = denied;
+                Log.Info(denied
+                    ? "wifi nativo: Windows no deja leer el WiFi (acceso denegado: la ubicación de Windows está apagada). Sin eso Cruce no puede mantener la notebook en 5 GHz."
+                    : "wifi nativo: vuelvo a poder leer el WiFi");
+            }
+            if (qr == 0)
             {
                 try
                 {

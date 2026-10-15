@@ -161,7 +161,7 @@ namespace Cruce
 
     public sealed class AppController
     {
-        public const string Version = "1.29";
+        public const string Version = "1.30";
 
         readonly Application app;
         public readonly Config Cfg;
@@ -271,7 +271,30 @@ namespace Cruce
         /// off the other half, ~700 minutes each) showed its packets arriving 50 ms late in 30% of the minutes with
         /// QoS on and in 0% with it off. So a PC on Wi-Fi sends as normal traffic; a wired PC keeps voice priority.
         /// </summary>
-        static bool WantQos() { return !(WifiNative.Available && WifiNative.Connected); }
+        static bool WantQos() { return !OnWifiPath(); }
+
+        /// <summary>
+        /// Does the traffic to the other PC leave through a Wi-Fi adapter? Decided from the network adapter itself, which
+        /// needs no permission: the Wi-Fi API answers "access denied" when Windows location is off, and on Oct 14 that made
+        /// Cruce think the laptop was wired (voice priority back on, 5 GHz keeper off).
+        /// </summary>
+        public static bool OnWifiPath()
+        {
+            try
+            {
+                IPAddress local;
+                using (var s = new Socket(AddressFamily.InterNetwork, SocketType.Dgram, ProtocolType.Udp))
+                {
+                    s.Connect("192.0.2.1", 9); // picks the outgoing interface; nothing is sent
+                    local = ((IPEndPoint)s.LocalEndPoint).Address;
+                }
+                foreach (var nic in System.Net.NetworkInformation.NetworkInterface.GetAllNetworkInterfaces())
+                    foreach (var a in nic.GetIPProperties().UnicastAddresses)
+                        if (a.Address.Equals(local)) return nic.NetworkInterfaceType == System.Net.NetworkInformation.NetworkInterfaceType.Wireless80211;
+            }
+            catch { }
+            return WifiNative.Available && WifiNative.Connected;
+        }
 
         /// <summary>Mouse Without Borders running next to Cruce: both grab the mouse and inject into each other (the
         /// pointer flips between PCs every second). Shown in the window, plus one balloon when it appears.</summary>
@@ -299,9 +322,17 @@ namespace Cruce
             });
         }
 
+        bool wifiDeniedWarned;
+
         void QosPolicy()
         {
             CheckMwb();
+            if (WifiNative.AccessDenied && !wifiDeniedWarned)
+            {
+                wifiDeniedWarned = true;
+                Notify(L.T("Windows no deja a Cruce leer el WiFi: activá la ubicación de Windows para que pueda mantener esta PC en 5 GHz"));
+            }
+            else if (!WifiNative.AccessDenied) wifiDeniedWarned = false;
             var l = link;
             if (l == null) return;
             bool on = WantQos();

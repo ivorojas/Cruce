@@ -368,6 +368,7 @@ namespace Cruce
             if (!string.IsNullOrEmpty(act)) modeText.Text = act;
             else if (!string.IsNullOrEmpty(band)) modeText.Text = band;
             else if (app.MwbRunning) modeText.Text = L.T("Mouse Without Borders está abierto: cerralo, se pelea con Cruce por el mouse");
+            else if (WifiNative.AccessDenied) modeText.Text = L.T("Activá la ubicación de Windows: sin eso Cruce no puede cuidar el WiFi");
             else if (!connected) modeText.Text = L.T("Abrí Cruce en la otra PC con la misma clave");
             else if (e.Mode == Mode.Remote) modeText.Text = L.F("Estás usando {0}", p.Name);
             else if (e.Mode == Mode.Controlled) modeText.Text = L.F("{0} está usando esta PC", p.Name);

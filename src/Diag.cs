@@ -1,4 +1,4 @@
-using System;
+﻿using System;
 using System.Collections.Generic;
 using System.Diagnostics;
 using System.Linq;
@@ -87,7 +87,6 @@ namespace Cruce
             w.Channel = Num(g("Canal|Channel"));
             w.RxMbps = Dbl(g("Velocidad de recepci.{1,2}n \\(Mbps\\)|Receive rate \\(Mbps\\)"));
             w.TxMbps = Dbl(g("Velocidad de transmisi.{1,2}n \\(Mbps\\)|Transmit rate \\(Mbps\\)"));
-            string myBssid = (g("BSSID|AP BSSID") ?? "").ToLowerInvariant();
             if (WifiNative.Available && WifiNative.Connected)
             {
                 // Driver values are fresher and more precise than netsh's text.
@@ -106,32 +105,17 @@ namespace Cruce
                 List<int[]> nat = null;
                 try { nat = WifiNative.Neighbours(); } catch { }
                 if (nat != null) aps = nat.Select(a => new[] { Math.Max(0, Math.Min(100, 2 * (a[0] + 100))), a[1] }).ToList();
-                else
+                // Only the driver's cached list: "netsh wlan show networks" (the old fallback) can make the adapter scan,
+                // taking the radio off-channel for a few hundred ms every minute. Not worth it for a statistic.
+                if (aps != null)
                 {
-                    string n = Netsh("wlan show networks mode=bssid");
-                    var list = new List<int[]>();
-                    string bssid = null; int sig = -1, ch = -1;
-                    Action flush = () => { if (bssid != null && bssid != myBssid && ch > 0) list.Add(new[] { sig, ch }); bssid = null; sig = -1; ch = -1; };
-                    foreach (var line in n.Split('\n'))
-                    {
-                        var mb = Regex.Match(line, @"^\s*BSSID\s*\d*\s*:\s*(\S+)", RegexOptions.IgnoreCase);
-                        if (mb.Success) { flush(); bssid = mb.Groups[1].Value.ToLowerInvariant(); continue; }
-                        if (Regex.IsMatch(line, @"^\s*SSID\s*\d+\s*:", RegexOptions.IgnoreCase)) { flush(); continue; }
-                        if (bssid == null) continue;
-                        var ms = Regex.Match(line, @"^\s*(Se.{1,2}al|Signal)\s*:\s*(\d+)", RegexOptions.IgnoreCase);
-                        if (ms.Success) sig = int.Parse(ms.Groups[2].Value);
-                        var mc = Regex.Match(line, @"^\s*(Canal|Channel)\s*:\s*(\d+)", RegexOptions.IgnoreCase);
-                        if (mc.Success) ch = int.Parse(mc.Groups[2].Value);
-                    }
-                    flush();
-                    aps = list;
+                    bool is24 = w.Channel <= 14;
+                    w.NetworksSeen = aps.Count;
+                    w.SameChannel = aps.Count(a => a[1] == w.Channel);
+                    w.Overlapping = is24 ? aps.Count(a => a[1] <= 14 && a[1] != w.Channel && Math.Abs(a[1] - w.Channel) <= 4) : 0;
+                    var near = aps.Where(a => a[1] == w.Channel || (is24 && a[1] <= 14 && Math.Abs(a[1] - w.Channel) <= 4)).ToList();
+                    w.NeighborMax = near.Count > 0 ? near.Max(a => a[0]) : 0;
                 }
-                bool is24 = w.Channel <= 14;
-                w.NetworksSeen = aps.Count;
-                w.SameChannel = aps.Count(a => a[1] == w.Channel);
-                w.Overlapping = is24 ? aps.Count(a => a[1] <= 14 && a[1] != w.Channel && Math.Abs(a[1] - w.Channel) <= 4) : 0;
-                var near = aps.Where(a => a[1] == w.Channel || (is24 && a[1] <= 14 && Math.Abs(a[1] - w.Channel) <= 4)).ToList();
-                w.NeighborMax = near.Count > 0 ? near.Max(a => a[0]) : 0;
             }
             wifi = w;
             wifiText = string.Format("wifi señal {0}%, {1}, canal {2}, rx {3} Mbps, vecinos en tu canal {4} (+{5} que se pisan), vecino más fuerte {6}%",

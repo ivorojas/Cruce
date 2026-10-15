@@ -137,6 +137,8 @@ namespace Cruce
             { "Cruce se actualiza a {0}: se cierra y se vuelve a abrir solo en unos segundos", "Cruce is updating to {0}: it will close and reopen by itself in a few seconds" },
             { "Cruce se actualizó a {0} ✓", "Cruce updated to {0} ✓" },
             { "Mouse Without Borders está abierto: cerralo, se pelea con Cruce por el mouse", "Mouse Without Borders is running: close it, it fights Cruce for the mouse" },
+            { "Windows no deja a Cruce leer el WiFi: activá la ubicación de Windows para que pueda mantener esta PC en 5 GHz", "Windows won't let Cruce read the Wi-Fi: turn on Windows location so it can keep this PC on 5 GHz" },
+            { "Activá la ubicación de Windows: sin eso Cruce no puede cuidar el WiFi", "Turn on Windows location: without it Cruce can't look after the Wi-Fi" },
             { "No se pudo crear la tarea de inicio (código {0}).", "Couldn't create the startup task (code {0})." },
             { "No se pudo quitar la tarea (código {0}).", "Couldn't remove the startup task (code {0})." },
             { "Cancelado.", "Cancelled." },
