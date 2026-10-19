@@ -374,6 +374,9 @@ namespace Cruce
         uint peerAckMax;
         int ackRegress;
 
+        /// <summary>The peer the link has right now (null if none): the engine checks its own view against this.</summary>
+        public PeerInfo CurrentPeer { get { lock (gate) return peer; } }
+
         /// <summary>Tests: drop the peer the way pre-1.27 did on a one-sided timeout (same session id, counters reset).</summary>
         public void TestForgetPeer() { lock (gate) { peer = null; ResetChannelLocked(); } }
 

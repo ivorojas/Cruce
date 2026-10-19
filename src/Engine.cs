@@ -1162,6 +1162,7 @@ namespace Cruce
             }
             RefreshLocalKeys(now);
             ReportCursor(now);
+            CheckPeerAgreement(now);
             if (lastTickUs != 0 && mode != Mode.Local) Interlocked.Add(ref activeUs, now - lastTickUs);
             lastTickUs = now;
             if (now - lastHookCheck > 3000000)
@@ -1279,6 +1280,39 @@ namespace Cruce
                 }
                 catch { }
             }
+        }
+
+        // ---- the link and the engine must agree on whether the other PC is there. "Peer up" and "peer down" come from
+        // different threads; waking from sleep (Oct 19 13:52) they fired in the same millisecond and landed in the wrong
+        // order: the link had the other PC, the engine thought it had none. Crossings from this PC, the summaries and
+        // the API's "connected" (so Dictado) were all dead while the other PC could still drive this one. Converge
+        // within a second whatever the order.
+        long lastPeerCheck, peerMissingSince;
+
+        void CheckPeerAgreement(long now)
+        {
+            if (now - lastPeerCheck < 1000000) return;
+            lastPeerCheck = now;
+            var lk = link;
+            if (lk == null) return;
+            var lp = lk.CurrentPeer;
+            if (lp != null && peer == null)
+            {
+                Log.Info("estado corregido: el enlace tenía a {0} pero el motor no; lo vuelvo a sumar", lp.Name);
+                OnPeerUp(lp);
+                peerMissingSince = 0;
+            }
+            else if (lp == null && peer != null)
+            {
+                if (peerMissingSince == 0) peerMissingSince = now;
+                else if (now - peerMissingSince > 3000000)
+                {
+                    Log.Info("estado corregido: el enlace ya no tiene a la otra PC pero el motor sí; la doy por desconectada");
+                    peerMissingSince = 0;
+                    OnPeerDown();
+                }
+            }
+            else peerMissingSince = 0;
         }
 
         void BuildMinute()
