@@ -71,15 +71,8 @@ namespace Cruce
         void PasteHere(string text)
         {
             if (TestNoInject) { var t = TestPasted; if (t != null) t(text); return; }
-            ui.BeginInvoke(new Action(() =>
+            ui.BeginInvoke(new Action(() => SetClip(() => { var d = new System.Windows.Forms.DataObject(); d.SetText(text); return d; }, () =>
             {
-                bool ok = false;
-                for (int i = 0; i < 8 && !ok; i++)
-                {
-                    try { Clipboard.SetDataObject(text, true); ignoreSeq = Native.GetClipboardSequenceNumber(); ok = true; }
-                    catch { Thread.Sleep(40); }
-                }
-                if (!ok) { Log.Info("pegado remoto: no pude escribir el portapapeles"); return; }
                 ThreadPool.QueueUserWorkItem(_ =>
                 {
                     Thread.Sleep(40);
@@ -92,7 +85,7 @@ namespace Cruce
                     Inject.Key(0xA2, 0x1D, false, true);
                     Log.Info("pegado remoto: {0} caracteres pegados acá", text.Length);
                 });
-            }));
+            }, true)));
         }
         public const long MaxFilesBytes = 2L << 30; // 2 GB per copy
         const int Chunk = 1 << 20;
@@ -477,7 +470,7 @@ namespace Cruce
                         case K_TEXT:
                             {
                                 var text = Encoding.UTF8.GetString(first, 1, first.Length - 1);
-                                ui.BeginInvoke(new Action(() => SetClip(() => Clipboard.SetDataObject(text, true))));
+                                ui.BeginInvoke(new Action(() => SetClip(() => { var d = new System.Windows.Forms.DataObject(); d.SetText(text); return d; }, null)));
                                 break;
                             }
                         case K_IMAGE:
@@ -486,9 +479,13 @@ namespace Cruce
                                 Buffer.BlockCopy(first, 1, png, 0, png.Length);
                                 ui.BeginInvoke(new Action(() => SetClip(() =>
                                 {
-                                    var dec = new PngBitmapDecoder(new MemoryStream(png), BitmapCreateOptions.PreservePixelFormat, BitmapCacheOption.OnLoad);
-                                    Clipboard.SetImage(dec.Frames[0]);
-                                })));
+                                    var d = new System.Windows.Forms.DataObject();
+                                    using (var ms = new MemoryStream(png))
+                                    using (var img = System.Drawing.Image.FromStream(ms))
+                                        d.SetImage(new System.Drawing.Bitmap(img)); // a copy that doesn't depend on the stream
+                                    d.SetData("PNG", new MemoryStream(png));        // keeps transparency for apps that read PNG
+                                    return d;
+                                }, null)));
                                 break;
                             }
                         case K_FILES:
@@ -579,7 +576,7 @@ namespace Cruce
                 var p = Path.Combine(dir, root);
                 if (File.Exists(p) || Directory.Exists(p)) list.Add(p);
             }
-            ui.BeginInvoke(new Action(() => SetClip(() => Clipboard.SetFileDropList(list))));
+            ui.BeginInvoke(new Action(() => SetClip(() => { var d = new System.Windows.Forms.DataObject(); d.SetFileDropList(list); return d; }, null)));
             if (total > 20 << 20) Say(L.T("Archivos listos: pegalos con Ctrl+V"));
             return dir;
         }
@@ -695,20 +692,54 @@ namespace Cruce
             }
         }
 
-        void SetClip(Action set)
+        // Writing the clipboard runs on the window's thread. It used to retry in place (and WPF's own call retries 10 x
+        // 100 ms more), so while another program held the clipboard open the Cruce window froze 6-8 s per copy and the
+        // copy was lost anyway (Oct 12 and 17 on the laptop: dozens in a row). Now: one quick try per attempt, retried
+        // from a timer for up to ~3 s without blocking anything, and only the newest copy keeps retrying.
+        int clipGen;
+
+        void SetClip(Func<System.Windows.Forms.DataObject> build, Action then, bool force = false)
         {
-            if (!cfg().Clipboard) return;
-            for (int i = 0; i < 8; i++)
+            if (!force && !cfg().Clipboard) return;
+            System.Windows.Forms.DataObject data;
+            try { data = build(); }
+            catch (Exception ex) { Log.Error(ex, "clip build"); return; }
+            TrySetClip(data, then, ++clipGen, 0);
+        }
+
+        void TrySetClip(System.Windows.Forms.DataObject data, Action then, int gen, int attempt)
+        {
+            if (gen != clipGen) return; // a newer copy arrived: that one wins
+            try
             {
-                try
-                {
-                    set();
-                    ignoreSeq = Native.GetClipboardSequenceNumber();
-                    return;
-                }
-                catch (Exception) { Thread.Sleep(40); }
+                System.Windows.Forms.Clipboard.SetDataObject(data, true, 1, 0); // WinForms: a single quick try, no built-in 1 s retry
+                ignoreSeq = Native.GetClipboardSequenceNumber();
+                if (attempt > 0) Log.Info("portapapeles: escrito al intento {0} (estaba ocupado)", attempt + 1);
+                if (then != null) then();
+                return;
             }
-            Log.Info("PORTAPAPELES: no se pudo escribir (otra app lo tenía ocupado)");
+            catch (Exception) { }
+            if (attempt >= 30) { Log.Info("PORTAPAPELES: no se pudo escribir en 3 s: lo tiene abierto {0}", ClipboardHolder()); return; }
+            var t = new DispatcherTimer { Interval = TimeSpan.FromMilliseconds(100) };
+            t.Tick += (s, e) => { t.Stop(); TrySetClip(data, then, gen, attempt + 1); };
+            t.Start();
+        }
+
+        [System.Runtime.InteropServices.DllImport("user32.dll")] static extern IntPtr GetOpenClipboardWindow();
+        [System.Runtime.InteropServices.DllImport("user32.dll")] static extern uint GetWindowThreadProcessId(IntPtr h, out uint pid);
+
+        /// <summary>Which program has the clipboard open right now (so the log says who is blocking it).</summary>
+        static string ClipboardHolder()
+        {
+            try
+            {
+                IntPtr w = GetOpenClipboardWindow();
+                if (w == IntPtr.Zero) return "otra app (no se sabe cuál)";
+                uint pid;
+                GetWindowThreadProcessId(w, out pid);
+                using (var p = System.Diagnostics.Process.GetProcessById((int)pid)) return p.ProcessName;
+            }
+            catch { return "otra app"; }
         }
 
         static void CleanupOld()

@@ -347,14 +347,18 @@ namespace Cruce
                 if (src == 0x10 && code == 5) Interlocked.Increment(ref Roams);
                 if ((src == 0x8 && code == 21) || (src == 0x10 && code == 10)) Interlocked.Increment(ref Disconnects);
                 Flight.Add(Flight.K_WIFIEV, (int)src, (int)code);
-                if ((src == 0x10 && code == 8) || (src == 0x8 && code == 26)) // signal change / scan list refresh: frequent, log at most every 30 s
+                if ((src == 0x10 && code == 8) || (src == 0x8 && code == 26)) // signal change / scan list refresh: very frequent
                 {
+                    // Only worth a line when the signal is actually weak (the per-minute summary has the average anyway):
+                    // with full signal this was ~100 lines a day of "100%" filling the log.
                     long now = Link.NowUs();
-                    if (now - lastSignalLog < 30000000) return;
+                    if (Quality >= 70 || now - lastSignalLog < 60000000) return;
                     lastSignalLog = now;
-                    Log.Info("wifi: cambio de calidad de señal (calidad {0}%, rssi {1} dBm)", Quality, Rssi);
+                    Log.Info("wifi: señal baja (calidad {0}%, rssi {1} dBm)", Quality, Rssi);
                     return;
                 }
+                // Scans are counted per minute (wifi_escaneos); the "scan finished/failed" pair every minute was most of the log.
+                if (src == 0x8 && (code == 7 || code == 8)) return;
                 string name;
                 if (Names.TryGetValue(key, out name)) Log.Info("wifi evento: {0}", name);
                 else if (src == 0x8 || src == 0x10) Log.Info("wifi evento: fuente 0x{0:X} código {1}", src, code);

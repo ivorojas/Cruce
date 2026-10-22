@@ -141,7 +141,7 @@ namespace Cruce
                 Directory.CreateDirectory(Config.Dir);
                 path = Path.Combine(Config.Dir, fileName);
                 var fi = new FileInfo(path);
-                if (fi.Exists && fi.Length > 1000000) { File.Delete(path + ".1"); File.Move(path, path + ".1"); }
+                if (fi.Exists && fi.Length > MaxSize) Rotate();
             }
             catch { }
             var t = new Thread(Pump) { IsBackground = true, Name = "cruce-log" };
@@ -163,11 +163,31 @@ namespace Cruce
             return new StreamWriter(fs, new UTF8Encoding(false)) { AutoFlush = true };
         }
 
+        // History: it used to rotate only at startup, past 1 MB, keeping one old file, so a PC that ran for days kept
+        // ~3 days at most (and a long session grew without limit). Now 4 MB per file, checked while running, and the
+        // last 4 files are kept (cruce.log + .1 .. .3, roughly two weeks).
+        const long MaxSize = 4L << 20;
+        const int Keep = 3;
+
+        static void Rotate()
+        {
+            try { File.Delete(path + "." + Keep); } catch { }
+            for (int i = Keep - 1; i >= 1; i--)
+                try { if (File.Exists(path + "." + i)) File.Move(path + "." + i, path + "." + (i + 1)); } catch { }
+            try { File.Move(path, path + ".1"); } catch { }
+        }
+
         static void Pump()
         {
             StreamWriter w = null;
+            int sinceCheck = 0;
             foreach (var s in q.GetConsumingEnumerable())
             {
+                if (w != null && ++sinceCheck >= 500)
+                {
+                    sinceCheck = 0;
+                    try { if (w.BaseStream.Length > MaxSize) { w.Dispose(); w = null; Rotate(); } } catch { }
+                }
                 for (int attempt = 0; attempt < 2; attempt++)
                 {
                     try
