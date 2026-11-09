@@ -13,7 +13,8 @@ namespace Cruce
         public const byte Enter = 1, Leave = 2, Button = 3, Wheel = 4, Key = 5, Takeover = 6, LogLine = 7;
         public const byte DragStart = 8, DragDrop = 9, DragCancel = 10, DragProbe = 11, DragProbeReply = 12, DragPull = 13;
         public const byte AppMsg = 14;   // small message from a local app (Api) to the same app on the other PC
-        public const byte Watch = 15, Cursor = 16; // the other PC's window is open / where this PC's own cursor is (for its live map)
+        public const byte Watch = 15, Cursor = 16;
+        public const byte AudioState = 17; // where all the sound plays (PC name or "") + when it was chosen: newest wins on both // the other PC's window is open / where this PC's own cursor is (for its live map)
     }
 
     /// <summary>
@@ -407,6 +408,16 @@ namespace Cruce
             var w = new WBuf(8);
             w.I32(c.X); w.I32(c.Y);
             l.QueueReliable(Ev.Cursor, w.ToArray());
+        }
+
+        /// <summary>Tells the other PC where all the sound plays now (it adopts it if it's newer than its own choice).</summary>
+        public void SendAudioState()
+        {
+            var l = link;
+            if (l == null || peer == null) return;
+            var w = new WBuf(64);
+            w.Str(cfg.AudioHome ?? ""); w.I64(cfg.AudioStamp);
+            l.QueueReliable(Ev.AudioState, w.ToArray());
         }
 
         /// <summary>Api: relays a small app message over the reliable channel. Returns false if not linked.</summary>
@@ -939,6 +950,7 @@ namespace Cruce
             lock (gate) { DropSessionLocked(); peer = p; edgesValid = false; haveRemotePos = false; }
             SyncSide(p, true);
             peerWatching = false; lastCurX = int.MinValue; PeerCurAt = 0;
+            SendAudioState();
             if (localWatching) { var l = link; if (l != null) l.QueueReliable(Ev.Watch, new byte[] { 1 }); }
             var n = Notify;
             if (n != null) n(L.F("Conectado con {0}", p.Name));
@@ -1073,6 +1085,18 @@ namespace Cruce
                 case Ev.AppMsg:
                     Api.FromPeer(r.Str(), r.Str());
                     break;
+                case Ev.AudioState:
+                    {
+                        string home = r.Str();
+                        long stamp = r.I64();
+                        if (stamp > cfg.AudioStamp)
+                        {
+                            cfg.AudioHome = home; cfg.AudioStamp = stamp; cfg.Save();
+                            Log.Info("audio: la otra PC eligió dónde suena todo: {0}", home.Length == 0 ? "cada PC el suyo" : home);
+                        }
+                        else if (stamp < cfg.AudioStamp) SendAudioState(); // ours is newer: tell it
+                        break;
+                    }
                 case Ev.Watch:
                     peerWatching = d.Length > 0 && d[0] == 1;
                     lastCurX = int.MinValue;

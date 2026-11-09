@@ -36,7 +36,9 @@ namespace Cruce
         readonly TextBox secretPlain, peerIp;
         readonly Button showSecret, adminBtn;
         readonly Slider speed;
-        readonly CheckBox clipSw, filesSw, autoSw, audioSw;
+        readonly CheckBox clipSw, filesSw, autoSw;
+        readonly RadioButton soundOff, soundHere, soundThere;
+        readonly TextBlock soundHint;
         readonly RadioButton[] sides;
         readonly RadioButton langEn, langEs;
         readonly Border settingsCard;
@@ -83,7 +85,8 @@ namespace Cruce
             secret = F<PasswordBox>("Secret"); secretPlain = F<TextBox>("SecretPlain"); peerIp = F<TextBox>("PeerIp");
             showSecret = F<Button>("ShowSecret"); adminBtn = F<Button>("AdminBtn");
             speed = F<Slider>("Speed");
-            clipSw = F<CheckBox>("ClipSw"); filesSw = F<CheckBox>("FilesSw"); autoSw = F<CheckBox>("AutoSw"); audioSw = F<CheckBox>("AudioSw");
+            clipSw = F<CheckBox>("ClipSw"); filesSw = F<CheckBox>("FilesSw"); autoSw = F<CheckBox>("AutoSw");
+            soundOff = F<RadioButton>("SoundOff"); soundHere = F<RadioButton>("SoundHere"); soundThere = F<RadioButton>("SoundThere"); soundHint = F<TextBlock>("SoundHint");
             sides = new[] { F<RadioButton>("SideLeft"), F<RadioButton>("SideRight"), F<RadioButton>("SideTop"), F<RadioButton>("SideBottom") };
             langEn = F<RadioButton>("LangEn"); langEs = F<RadioButton>("LangEs");
             settingsCard = F<Border>("SettingsCard"); settingsBtn = F<System.Windows.Controls.Primitives.ToggleButton>("SettingsBtn");
@@ -179,7 +182,7 @@ namespace Cruce
             clipSw.IsChecked = c.Clipboard;
             filesSw.IsChecked = c.Files;
             filesSw.IsEnabled = c.Clipboard;
-            audioSw.IsChecked = c.AudioSend;
+
             SetSide(c.Side);
             langEn.IsChecked = L.English; langEs.IsChecked = !L.English;
             ShowSettings(string.IsNullOrEmpty(c.Secret));
@@ -229,7 +232,9 @@ namespace Cruce
             clipSw.Click += (s, e) => { app.Cfg.Clipboard = clipSw.IsChecked == true; filesSw.IsEnabled = app.Cfg.Clipboard; app.Cfg.Save(); };
             filesSw.Click += (s, e) => { app.Cfg.Files = filesSw.IsChecked == true; app.Cfg.Save(); };
             autoSw.Click += (s, e) => ToggleAutostart();
-            audioSw.Click += (s, e) => app.SetAudioSend(audioSw.IsChecked == true);
+            soundOff.Checked += (s, e) => { if (!loading) app.SetAudioHome(""); };
+            soundHere.Checked += (s, e) => { if (!loading) app.SetAudioHome(app.Cfg.Name); };
+            soundThere.Checked += (s, e) => { var pp = app.Engine.Peer; if (!loading && pp != null) app.SetAudioHome(pp.Name); };
             adminBtn.Click += (s, e) => app.RestartElevated();
             F<Button>("ReportBtn").Click += (s, e) => { try { System.Diagnostics.Process.Start(Metrics.WriteReport(DateTime.Today)); } catch (Exception ex) { Log.Error(ex, "report"); } };
             F<Button>("UpdBtn").Click += (s, e) => app.CheckUpdates(true);
@@ -302,6 +307,24 @@ namespace Cruce
                 FitToScreen();
                 if (show) settingsCard.BringIntoView();
             }), DispatcherPriority.Loaded);
+        }
+
+        /// <summary>Shows the synced "where does all the sound play" choice (it can change from the other PC or the tray).</summary>
+        void SyncSound(PeerInfo p)
+        {
+            string home = app.Cfg.AudioHome ?? "";
+            bool here = home.Length > 0 && string.Equals(home, app.Cfg.Name, StringComparison.OrdinalIgnoreCase);
+            bool there = home.Length > 0 && !here;
+            soundThere.IsEnabled = p != null;
+            if (!loading)
+            {
+                loading = true;
+                soundOff.IsChecked = home.Length == 0; soundHere.IsChecked = here; soundThere.IsChecked = there;
+                loading = false;
+            }
+            soundHint.Text = home.Length == 0 ? L.T("Cada PC suena por sus parlantes.")
+                : here ? (p != null ? L.F("{0} se silencia y su sonido sale por acá.", p.Name) : L.T("Cuando se conecte, el sonido de la otra PC va a salir por acá."))
+                : (p != null ? L.F("Esta PC se silencia y su sonido sale por {0}.", p.Name) : L.T("Cuando se conecte, el sonido de esta PC va a salir por la otra."));
         }
 
         void ApplyConnection()
@@ -410,7 +433,7 @@ namespace Cruce
             if ((nowT - lastSample).TotalMilliseconds >= 500) lastSample = nowT;
             if (added && IsVisible) DrawSpark();
 
-            if (!loading && audioSw.IsChecked != app.Cfg.AudioSend) { loading = true; audioSw.IsChecked = app.Cfg.AudioSend; loading = false; } // toggled from the tray
+            SyncSound(p);
             if (!loading && !sides[(int)app.Cfg.Side].IsChecked.GetValueOrDefault())
             {
                 loading = true; SetSide(app.Cfg.Side); loading = false;

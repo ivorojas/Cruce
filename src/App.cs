@@ -36,7 +36,7 @@ namespace Cruce
                 return SelfTest.Run(args.Contains("--inject"));
             }
             if (args.Length == 2 && args[0] == "--write-icon") { IconArt.WriteIco(args[1]); return 0; }
-            if (args.Contains("--audio-test")) { AttachConsole(-1); Log.Init("cruce-prueba.log"); return SelfTest.AudioTest(); }
+            if (args.Contains("--audio-test")) { AttachConsole(-1); Log.Init("cruce-prueba.log"); return SelfTest.AudioTest(args.Contains("--external-tone")); }
             if (args.Length == 4 && args[0] == "--ui-shot") { Native.SetProcessDpiAwarenessContext(new IntPtr(-4)); Log.Init("cruce-prueba.log"); return AppController.UiShot(args[1], args[2] == "es", args[3] == "1"); }
             if (args.Length == 6 && args[0] == "--fake-drop") { Log.Init("cruce-prueba.log"); Native.SetProcessDpiAwarenessContext(new IntPtr(-4)); return SelfTest.FakeDrop(args[1], int.Parse(args[2]), int.Parse(args[3]), args[4], args[5]); }
             if (args.Length == 5 && args[0] == "--fake-peer") { Log.Init("cruce-prueba.log"); return SelfTest.FakePeer(args[1], int.Parse(args[2]), int.Parse(args[3]), args[4]); }
@@ -166,7 +166,7 @@ namespace Cruce
 
     public sealed class AppController
     {
-        public const string Version = "1.33";
+        public const string Version = "1.34";
 
         readonly Application app;
         public readonly Config Cfg;
@@ -475,34 +475,38 @@ namespace Cruce
             catch (System.ComponentModel.Win32Exception) { /* UAC cancelled */ }
         }
 
-        // ---- audio: this PC's sound can play on the other PC (and be muted here). Switch per PC, in Settings and the tray.
+        // ---- audio: one synced choice, "where does all the sound play": nowhere special (each PC its own), this PC or
+        // the other one. The PC that is NOT the chosen one sends what it plays there and mutes its own speakers.
         readonly AudioPlayer audioIn = new AudioPlayer();
         AudioSender audioOut;
 
         public bool AudioSending { get { return audioOut != null; } }
 
-        public void SetAudioSend(bool on)
+        /// <summary>home: this PC's name, the other PC's name, or "" (off). Synced to the other PC; newest choice wins.</summary>
+        public void SetAudioHome(string home)
         {
-            Cfg.AudioSend = on;
+            Cfg.AudioHome = home ?? "";
+            Cfg.AudioStamp = DateTime.UtcNow.Ticks;
             Cfg.Save();
-            Log.Info("audio: mandar el sonido de esta PC a la otra {0}", on ? "ACTIVADO" : "desactivado");
+            Log.Info("audio: todo el sonido en {0}", Cfg.AudioHome.Length == 0 ? "cada PC el suyo" : Cfg.AudioHome);
+            Engine.SendAudioState();
             AudioPolicy();
         }
 
         void AudioPolicy()
         {
             var l = link;
-            bool want = Cfg.AudioSend && l != null && l.CurrentPeer != null;
+            var p = l != null ? l.CurrentPeer : null;
+            bool want = p != null && Cfg.AudioHome.Length > 0 && string.Equals(Cfg.AudioHome, p.Name, StringComparison.OrdinalIgnoreCase);
             if (want && audioOut == null)
             {
                 audioOut = new AudioSender((b, n) => { var lk = link; if (lk != null) lk.SendAudio(b, n); });
                 audioOut.Start();
             }
             else if (!want && audioOut != null) StopAudio();
-            // If this PC is playing the other PC's sound, its own loopback contains it: don't send it back (echo loop).
+            // Fallback capture (older Windows) also records what Cruce plays: don't send that back.
             if (audioOut != null) audioOut.Paused = audioIn.Active;
         }
-
         public void StopAudio()
         {
             var a = audioOut;
@@ -533,7 +537,7 @@ namespace Cruce
     {
         readonly Forms.NotifyIcon ni;
         readonly Icon[] icons;
-        readonly Forms.ToolStripMenuItem status, pause, open, quit, audio;
+        readonly Forms.ToolStripMenuItem status, pause, open, quit, sound, soundOff, soundHere, soundThere;
         readonly AppController app;
         int lastState = -1;
 
@@ -572,8 +576,13 @@ namespace Cruce
             menu.Items.Add(open);
             pause =new Forms.ToolStripMenuItem(L.T("Pausar el cruce"), null, (s, e) => { app.Engine.Paused = !app.Engine.Paused; });
             menu.Items.Add(pause);
-            audio = new Forms.ToolStripMenuItem(L.T("Escuchar el audio de esta PC en la otra"), null, (s, e) => app.SetAudioSend(!app.Cfg.AudioSend));
-            menu.Items.Add(audio);
+            soundOff = new Forms.ToolStripMenuItem(L.T("Cada PC con su sonido"), null, (s, e) => app.SetAudioHome(""));
+            soundHere = new Forms.ToolStripMenuItem(L.T("Todo en esta PC"), null, (s, e) => app.SetAudioHome(app.Cfg.Name));
+            soundThere = new Forms.ToolStripMenuItem(L.T("Todo en la otra PC"), null, (s, e) => { var p = app.Engine.Peer; if (p != null) app.SetAudioHome(p.Name); });
+            sound = new Forms.ToolStripMenuItem(L.T("Sonido"));
+            sound.DropDownItems.Add(soundOff); sound.DropDownItems.Add(soundHere); sound.DropDownItems.Add(soundThere);
+            sound.DropDown.BackColor = Color.FromArgb(27, 30, 38); sound.DropDown.ForeColor = Color.FromArgb(236, 238, 244);
+            menu.Items.Add(sound);
             menu.Items.Add(new Forms.ToolStripSeparator());
             quit = new Forms.ToolStripMenuItem(L.T("Salir"), null, (s, e) => app.Exit());
             menu.Items.Add(quit);
@@ -597,8 +606,16 @@ namespace Cruce
             pause.Text = L.T(paused ? "Reanudar el cruce" : "Pausar el cruce");
             open.Text = L.T("Abrir Cruce");
             quit.Text = L.T("Salir");
-            audio.Text = L.T("Escuchar el audio de esta PC en la otra");
-            audio.Checked = app.Cfg.AudioSend;
+            sound.Text = L.T("Sonido");
+            soundOff.Text = L.T("Cada PC con su sonido");
+            soundHere.Text = L.T("Todo en esta PC");
+            soundThere.Text = L.T("Todo en la otra PC");
+            var peerNow = app.Engine.Peer;
+            string home = app.Cfg.AudioHome ?? "";
+            soundOff.Checked = home.Length == 0;
+            soundHere.Checked = home.Length > 0 && string.Equals(home, app.Cfg.Name, StringComparison.OrdinalIgnoreCase);
+            soundThere.Checked = home.Length > 0 && !soundHere.Checked;
+            soundThere.Enabled = peerNow != null;
             if (state != lastState) { ni.Icon = icons[state]; lastState = state; }
         }
 

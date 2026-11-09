@@ -16,67 +16,67 @@ namespace Cruce
     [ComImport, Guid("A95664D2-9614-4F35-A746-DE8DB63617E6"), InterfaceType(ComInterfaceType.InterfaceIsIUnknown)]
     interface IMMDeviceEnumerator
     {
-        int EnumAudioEndpoints(int dataFlow, int stateMask, out IntPtr devices);
-        int GetDefaultAudioEndpoint(int dataFlow, int role, out IMMDevice device);
+        [PreserveSig] int EnumAudioEndpoints(int dataFlow, int stateMask, out IntPtr devices);
+        [PreserveSig] int GetDefaultAudioEndpoint(int dataFlow, int role, out IMMDevice device);
     }
 
     [ComImport, Guid("D666063F-1587-4E43-81F1-B948E807363F"), InterfaceType(ComInterfaceType.InterfaceIsIUnknown)]
     interface IMMDevice
     {
-        int Activate(ref Guid iid, int clsCtx, IntPtr activationParams, [MarshalAs(UnmanagedType.IUnknown)] out object iface);
-        int OpenPropertyStore(int access, out IntPtr store);
-        int GetId([MarshalAs(UnmanagedType.LPWStr)] out string id);
-        int GetState(out int state);
+        [PreserveSig] int Activate(ref Guid iid, int clsCtx, IntPtr activationParams, [MarshalAs(UnmanagedType.IUnknown)] out object iface);
+        [PreserveSig] int OpenPropertyStore(int access, out IntPtr store);
+        [PreserveSig] int GetId([MarshalAs(UnmanagedType.LPWStr)] out string id);
+        [PreserveSig] int GetState(out int state);
     }
 
     [ComImport, Guid("1CB9AD4C-DBFA-4c32-B178-C2F568A703B2"), InterfaceType(ComInterfaceType.InterfaceIsIUnknown)]
     interface IAudioClient
     {
-        int Initialize(int shareMode, int streamFlags, long bufferDuration, long periodicity, IntPtr format, IntPtr sessionGuid);
-        int GetBufferSize(out uint frames);
-        int GetStreamLatency(out long latency);
-        int GetCurrentPadding(out uint padding);
-        int IsFormatSupported(int shareMode, IntPtr format, out IntPtr closest);
-        int GetMixFormat(out IntPtr format);
-        int GetDevicePeriod(out long defaultPeriod, out long minimumPeriod);
-        int Start();
-        int Stop();
-        int Reset();
-        int SetEventHandle(IntPtr h);
-        int GetService(ref Guid iid, [MarshalAs(UnmanagedType.IUnknown)] out object service);
+        [PreserveSig] int Initialize(int shareMode, int streamFlags, long bufferDuration, long periodicity, IntPtr format, IntPtr sessionGuid);
+        [PreserveSig] int GetBufferSize(out uint frames);
+        [PreserveSig] int GetStreamLatency(out long latency);
+        [PreserveSig] int GetCurrentPadding(out uint padding);
+        [PreserveSig] int IsFormatSupported(int shareMode, IntPtr format, out IntPtr closest);
+        [PreserveSig] int GetMixFormat(out IntPtr format);
+        [PreserveSig] int GetDevicePeriod(out long defaultPeriod, out long minimumPeriod);
+        [PreserveSig] int Start();
+        [PreserveSig] int Stop();
+        [PreserveSig] int Reset();
+        [PreserveSig] int SetEventHandle(IntPtr h);
+        [PreserveSig] int GetService(ref Guid iid, [MarshalAs(UnmanagedType.IUnknown)] out object service);
     }
 
     [ComImport, Guid("C8ADBD64-E71E-48a0-A4DE-185C395CD317"), InterfaceType(ComInterfaceType.InterfaceIsIUnknown)]
     interface IAudioCaptureClient
     {
-        int GetBuffer(out IntPtr data, out uint frames, out uint flags, out ulong devicePosition, out ulong qpcPosition);
-        int ReleaseBuffer(uint frames);
-        int GetNextPacketSize(out uint frames);
+        [PreserveSig] int GetBuffer(out IntPtr data, out uint frames, out uint flags, out ulong devicePosition, out ulong qpcPosition);
+        [PreserveSig] int ReleaseBuffer(uint frames);
+        [PreserveSig] int GetNextPacketSize(out uint frames);
     }
 
     [ComImport, Guid("F294ACFC-3146-4483-A7BF-ADDCA7C260E2"), InterfaceType(ComInterfaceType.InterfaceIsIUnknown)]
     interface IAudioRenderClient
     {
-        int GetBuffer(uint frames, out IntPtr data);
-        int ReleaseBuffer(uint frames, uint flags);
+        [PreserveSig] int GetBuffer(uint frames, out IntPtr data);
+        [PreserveSig] int ReleaseBuffer(uint frames, uint flags);
     }
 
     [ComImport, Guid("5CDF2C82-841E-4546-9722-0CF74078229A"), InterfaceType(ComInterfaceType.InterfaceIsIUnknown)]
     interface IAudioEndpointVolume
     {
-        int RegisterControlChangeNotify(IntPtr notify);
-        int UnregisterControlChangeNotify(IntPtr notify);
-        int GetChannelCount(out uint count);
-        int SetMasterVolumeLevel(float db, ref Guid context);
-        int SetMasterVolumeLevelScalar(float level, ref Guid context);
-        int GetMasterVolumeLevel(out float db);
-        int GetMasterVolumeLevelScalar(out float level);
-        int SetChannelVolumeLevel(uint channel, float db, ref Guid context);
-        int SetChannelVolumeLevelScalar(uint channel, float level, ref Guid context);
-        int GetChannelVolumeLevel(uint channel, out float db);
-        int GetChannelVolumeLevelScalar(uint channel, out float level);
-        int SetMute([MarshalAs(UnmanagedType.Bool)] bool mute, ref Guid context);
-        int GetMute([MarshalAs(UnmanagedType.Bool)] out bool mute);
+        [PreserveSig] int RegisterControlChangeNotify(IntPtr notify);
+        [PreserveSig] int UnregisterControlChangeNotify(IntPtr notify);
+        [PreserveSig] int GetChannelCount(out uint count);
+        [PreserveSig] int SetMasterVolumeLevel(float db, ref Guid context);
+        [PreserveSig] int SetMasterVolumeLevelScalar(float level, ref Guid context);
+        [PreserveSig] int GetMasterVolumeLevel(out float db);
+        [PreserveSig] int GetMasterVolumeLevelScalar(out float level);
+        [PreserveSig] int SetChannelVolumeLevel(uint channel, float db, ref Guid context);
+        [PreserveSig] int SetChannelVolumeLevelScalar(uint channel, float level, ref Guid context);
+        [PreserveSig] int GetChannelVolumeLevel(uint channel, out float db);
+        [PreserveSig] int GetChannelVolumeLevelScalar(uint channel, out float level);
+        [PreserveSig] int SetMute([MarshalAs(UnmanagedType.Bool)] bool mute, ref Guid context);
+        [PreserveSig] int GetMute([MarshalAs(UnmanagedType.Bool)] out bool mute);
     }
 
     static class Wasapi
@@ -186,34 +186,47 @@ namespace Cruce
             try { File.Delete(MuteMark); } catch { }
         }
 
+        /// <summary>Mute this PC's speakers while sending. Off when the other PC sends its audio here too: then this PC
+        /// may be the one with the headphones, and the user mutes whichever PC they like.</summary>
+        public volatile bool MuteLocal = true;
+
+        /// <summary>True when capturing "everything except Cruce" (Windows 10 2004+): the other PC's sound that Cruce plays
+        /// here is not sent back, so both PCs can send at the same time without an echo loop.</summary>
+        public volatile bool ExcludesOwnPlayback;
+
         void Loop()
         {
             while (run)
             {
                 IAudioClient client = null;
                 IAudioEndpointVolume vol = null;
-                bool wasMuted = false, muted = false;
+                bool mutedByUs = false;
+                var evt = new AutoResetEvent(false);
                 try
                 {
-                    var dev = Wasapi.DefaultOutput();
-                    client = Wasapi.Activate<IAudioClient>(dev, Wasapi.IidAudioClient);
-                    IntPtr pf;
-                    Wasapi.Check(client.GetMixFormat(out pf), "formato");
-                    var f = Wasapi.Read(pf);
-                    Wasapi.Check(client.Initialize(Wasapi.Shared, Wasapi.LoopbackFlag, 2000000, 0, pf, IntPtr.Zero), "iniciar captura");
-                    Marshal.FreeCoTaskMem(pf);
+                    Wasapi.Fmt f;
+                    client = ProcessLoopback.Open(evt, out f);
+                    ExcludesOwnPlayback = client != null;
+                    if (client == null)
+                    {
+                        // Older Windows: whole-device loopback (it would also record what Cruce plays: echo guard = Paused)
+                        var dev0 = Wasapi.DefaultOutput();
+                        client = Wasapi.Activate<IAudioClient>(dev0, Wasapi.IidAudioClient);
+                        IntPtr pf;
+                        Wasapi.Check(client.GetMixFormat(out pf), "formato");
+                        f = Wasapi.Read(pf);
+                        Wasapi.Check(client.Initialize(Wasapi.Shared, Wasapi.LoopbackFlag, 2000000, 0, pf, IntPtr.Zero), "iniciar captura");
+                        Marshal.FreeCoTaskMem(pf);
+                    }
                     object o;
                     var iid = Wasapi.IidCapture;
                     Wasapi.Check(client.GetService(ref iid, out o), "captura");
                     var cap = (IAudioCaptureClient)o;
-
-                    vol = Wasapi.Activate<IAudioEndpointVolume>(dev, Wasapi.IidVolume);
-                    vol.GetMute(out wasMuted);
-                    var ctx = Guid.Empty;
-                    if (!wasMuted) { vol.SetMute(true, ref ctx); muted = true; try { File.WriteAllText(MuteMark, DateTime.Now.ToString("o")); } catch { } }
+                    vol = Wasapi.Activate<IAudioEndpointVolume>(Wasapi.DefaultOutput(), Wasapi.IidVolume);
 
                     Wasapi.Check(client.Start(), "arrancar captura");
-                    Log.Info("audio: mando el sonido de esta PC a la otra ({0} Hz, {1} canales, {2} bits{3}); los parlantes de acá quedan en silencio", f.Rate, f.Channels, f.Bits, f.Float ? " float" : "");
+                    Log.Info("audio: mando el sonido de esta PC a la otra ({0} Hz, {1} canales, {2} bits{3}; {4})", f.Rate, f.Channels, f.Bits, f.Float ? " float" : "",
+                        ExcludesOwnPlayback ? "todo menos lo que reproduce Cruce: se puede mandar desde las dos PCs a la vez" : "toda la salida");
                     State = "on";
                     double step = (double)f.Rate / Rate, pos = 0;   // linear resampling to 48 kHz
                     float lastL = 0, lastR = 0;
@@ -225,7 +238,21 @@ namespace Cruce
                     {
                         while (run)
                         {
-                            Thread.Sleep(3);
+                            // speakers: muted only while this is a one-way send (see MuteLocal)
+                            bool wantMute = MuteLocal;
+                            if (wantMute && !mutedByUs)
+                            {
+                                bool already; vol.GetMute(out already);
+                                if (!already) { var ctx = Guid.Empty; vol.SetMute(true, ref ctx); mutedByUs = true; try { File.WriteAllText(MuteMark, DateTime.Now.ToString("o")); } catch { } Log.Info("audio: silencio los parlantes de esta PC"); }
+                            }
+                            else if (!wantMute && mutedByUs)
+                            {
+                                var ctx = Guid.Empty; vol.SetMute(false, ref ctx); mutedByUs = false;
+                                try { File.Delete(MuteMark); } catch { }
+                                Log.Info("audio: la otra PC también manda su sonido: los parlantes de esta PC vuelven a sonar (silenciá a mano la que no uses)");
+                            }
+
+                            if (ExcludesOwnPlayback) evt.WaitOne(20); else Thread.Sleep(3);
                             uint n;
                             while (run && cap.GetNextPacketSize(out n) == 0 && n > 0)
                             {
@@ -248,7 +275,7 @@ namespace Cruce
                                             outBuf[0] = (byte)seq; outBuf[1] = (byte)(seq >> 8); outBuf[2] = (byte)(seq >> 16); outBuf[3] = (byte)(seq >> 24);
                                             outBuf[4] = (byte)PacketFrames; outBuf[5] = (byte)(PacketFrames >> 8);
                                             seq++;
-                                            if (!Paused) send(outBuf, outBuf.Length);
+                                            if (!Paused || ExcludesOwnPlayback) send(outBuf, outBuf.Length);
                                             outFrames = 0;
                                         }
                                         pos += step;
@@ -270,17 +297,91 @@ namespace Cruce
                 }
                 finally
                 {
-                    if (muted && vol != null)
+                    if (mutedByUs && vol != null)
                     {
                         try { var ctx = Guid.Empty; vol.SetMute(false, ref ctx); } catch { }
                         try { File.Delete(MuteMark); } catch { }
                     }
                     if (client != null) try { Marshal.ReleaseComObject(client); } catch { }
+                    evt.Dispose();
                 }
                 if (run) Thread.Sleep(2000);
             }
             State = "";
-            Log.Info("audio: dejé de mandar el sonido; los parlantes de esta PC vuelven a sonar");
+            Log.Info("audio: dejé de mandar el sonido de esta PC");
+        }
+    }
+
+    // ------------------------------------------------------------------------------------------------- process loopback
+
+    [ComImport, Guid("72A22D78-CDE4-431D-B8CC-843A71199B6D"), InterfaceType(ComInterfaceType.InterfaceIsIUnknown)]
+    interface IActivateAudioInterfaceAsyncOperation
+    {
+        [PreserveSig] int GetActivateResult(out int activateResult, [MarshalAs(UnmanagedType.IUnknown)] out object activatedInterface);
+    }
+
+    [ComImport, Guid("41D949AB-9862-444A-80F6-C261334DA5EB"), InterfaceType(ComInterfaceType.InterfaceIsIUnknown)]
+    interface IActivateAudioInterfaceCompletionHandler
+    {
+        void ActivateCompleted(IActivateAudioInterfaceAsyncOperation operation);
+    }
+
+    [ComImport, Guid("94ea2b94-e9cc-49e0-c0ff-ee64ca8f5b90"), InterfaceType(ComInterfaceType.InterfaceIsIUnknown)]
+    interface IAgileObject { }
+
+    /// <summary>
+    /// "Everything this PC plays except Cruce" (Windows 10 2004+ process loopback, excluding our own process tree). Cruce
+    /// plays the other PC's sound itself, so with this both PCs can send at once without sending that sound back.
+    /// Returns null when Windows doesn't support it.
+    /// </summary>
+    static class ProcessLoopback
+    {
+        [ComVisible(true), ClassInterface(ClassInterfaceType.None)]
+        sealed class Handler : IActivateAudioInterfaceCompletionHandler, IAgileObject
+        {
+            public readonly ManualResetEvent Done = new ManualResetEvent(false);
+            public IActivateAudioInterfaceAsyncOperation Op;
+            public void ActivateCompleted(IActivateAudioInterfaceAsyncOperation operation) { Op = operation; Done.Set(); }
+        }
+
+        [DllImport("Mmdevapi.dll", ExactSpelling = true)]
+        static extern int ActivateAudioInterfaceAsync([MarshalAs(UnmanagedType.LPWStr)] string path, [MarshalAs(UnmanagedType.LPStruct)] Guid riid,
+            IntPtr activationParams, IActivateAudioInterfaceCompletionHandler handler, out IActivateAudioInterfaceAsyncOperation op);
+
+        static bool unsupported;
+
+        public static IAudioClient Open(AutoResetEvent evt, out Wasapi.Fmt fmt)
+        {
+            fmt = new Wasapi.Fmt { Rate = AudioSender.Rate, Channels = 2, Bits = 16, Block = 4, Float = false };
+            if (unsupported) return null;
+            IntPtr prm = Marshal.AllocHGlobal(12), pv = Marshal.AllocHGlobal(24), wf = Marshal.AllocHGlobal(18);
+            try
+            {
+                Marshal.WriteInt32(prm, 0, 1);                                          // AUDIOCLIENT_ACTIVATION_TYPE_PROCESS_LOOPBACK
+                Marshal.WriteInt32(prm, 4, System.Diagnostics.Process.GetCurrentProcess().Id);
+                Marshal.WriteInt32(prm, 8, 1);                                          // PROCESS_LOOPBACK_MODE_EXCLUDE_TARGET_PROCESS_TREE
+                for (int i = 0; i < 24; i++) Marshal.WriteByte(pv, i, 0);
+                Marshal.WriteInt16(pv, 0, 65);                                          // VT_BLOB
+                Marshal.WriteInt32(pv, 8, 12);
+                Marshal.WriteIntPtr(pv, 16, prm);
+                var h = new Handler();
+                IActivateAudioInterfaceAsyncOperation op;
+                int hr = ActivateAudioInterfaceAsync("VAD\\Process_Loopback", Wasapi.IidAudioClient, pv, h, out op);
+                if (hr < 0 || !h.Done.WaitOne(5000)) { unsupported = true; Log.Info("audio: este Windows no permite excluir a Cruce de la captura (0x{0:X8}); uso la salida entera", hr); return null; }
+                int ar; object o;
+                h.Op.GetActivateResult(out ar, out o);
+                if (ar < 0 || o == null) { unsupported = true; Log.Info("audio: este Windows no permite excluir a Cruce de la captura (0x{0:X8}); uso la salida entera", ar); return null; }
+                var client = (IAudioClient)o;
+                // 48 kHz stereo 16-bit PCM: exactly what goes on the wire, Windows converts for us
+                Marshal.WriteInt16(wf, 0, 1); Marshal.WriteInt16(wf, 2, 2); Marshal.WriteInt32(wf, 4, AudioSender.Rate);
+                Marshal.WriteInt32(wf, 8, AudioSender.Rate * 4); Marshal.WriteInt16(wf, 12, 4); Marshal.WriteInt16(wf, 14, 16); Marshal.WriteInt16(wf, 16, 0);
+                const int flags = 0x00020000 | 0x00040000 | unchecked((int)0x80000000) | 0x08000000; // LOOPBACK | EVENTCALLBACK | AUTOCONVERTPCM | SRC_DEFAULT_QUALITY
+                Wasapi.Check(client.Initialize(Wasapi.Shared, flags, 200000, 0, wf, IntPtr.Zero), "iniciar captura de procesos");
+                Wasapi.Check(client.SetEventHandle(evt.SafeWaitHandle.DangerousGetHandle()), "evento de captura");
+                return client;
+            }
+            catch (Exception ex) { unsupported = true; Log.Info("audio: no pude excluir a Cruce de la captura ({0}); uso la salida entera", ex.Message); return null; }
+            finally { Marshal.FreeHGlobal(prm); Marshal.FreeHGlobal(pv); Marshal.FreeHGlobal(wf); }
         }
     }
 

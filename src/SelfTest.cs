@@ -63,7 +63,7 @@ namespace Cruce
         }
 
         /// <summary>--audio-test: mute this PC, play a 1 s 440 Hz tone, check the loopback still records it, restore.</summary>
-        public static int AudioTest()
+        public static int AudioTest(bool externalTone)
         {
             long bytes = 0; double sumSq = 0; long samples = 0;
             var player = new AudioPlayer(); // plays into this same (muted) output: checks the receive side without a sound
@@ -91,7 +91,9 @@ namespace Cruce
             w.Write(Encoding.ASCII.GetBytes("data")); w.Write(n2 * 2);
             for (int i = 0; i < n2; i++) w.Write((short)(Math.Sin(2 * Math.PI * 440 * i / rate) * 8000));
             ms.Position = 0;
-            using (var sp = new System.Media.SoundPlayer(ms)) sp.PlaySync();
+            // Cruce never records its own sound (that is what lets both PCs send at once), so the tone must come from
+            // another program: with --external-tone the caller plays it while this waits.
+            if (externalTone) Thread.Sleep(2500); else using (var sp = new System.Media.SoundPlayer(ms)) sp.PlaySync();
             Thread.Sleep(300);
             tx.Stop();
             Thread.Sleep(600);
