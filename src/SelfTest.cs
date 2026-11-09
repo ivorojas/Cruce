@@ -62,6 +62,51 @@ namespace Cruce
             return ok ? 0 : 1;
         }
 
+        /// <summary>--audio-test: mute this PC, play a 1 s 440 Hz tone, check the loopback still records it, restore.</summary>
+        public static int AudioTest()
+        {
+            long bytes = 0; double sumSq = 0; long samples = 0;
+            var player = new AudioPlayer(); // plays into this same (muted) output: checks the receive side without a sound
+            var tx = new AudioSender((b, n) =>
+            {
+                player.Push(b, 0);
+                Interlocked.Add(ref bytes, n);
+                lock (sb ?? (sb = new StringBuilder()))
+                    for (int i = 6; i + 1 < n; i += 2) { short s = (short)(b[i] | (b[i + 1] << 8)); sumSq += (double)s * s; samples++; }
+            });
+            tx.Start();
+            Thread.Sleep(800);
+            bool mutedWhilePlaying = false;
+            try
+            {
+                var vol = Wasapi.Activate<IAudioEndpointVolume>(Wasapi.DefaultOutput(), Wasapi.IidVolume);
+                vol.GetMute(out mutedWhilePlaying);
+            }
+            catch { }
+            var ms = new System.IO.MemoryStream();
+            var w = new System.IO.BinaryWriter(ms);
+            int rate = 44100, n2 = rate;
+            w.Write(Encoding.ASCII.GetBytes("RIFF")); w.Write(36 + n2 * 2); w.Write(Encoding.ASCII.GetBytes("WAVEfmt "));
+            w.Write(16); w.Write((short)1); w.Write((short)1); w.Write(rate); w.Write(rate * 2); w.Write((short)2); w.Write((short)16);
+            w.Write(Encoding.ASCII.GetBytes("data")); w.Write(n2 * 2);
+            for (int i = 0; i < n2; i++) w.Write((short)(Math.Sin(2 * Math.PI * 440 * i / rate) * 8000));
+            ms.Position = 0;
+            using (var sp = new System.Media.SoundPlayer(ms)) sp.PlaySync();
+            Thread.Sleep(300);
+            tx.Stop();
+            Thread.Sleep(600);
+            double rms = samples > 0 ? Math.Sqrt(sumSq / samples) : 0;
+            bool restored = true;
+            try
+            {
+                var vol = Wasapi.Activate<IAudioEndpointVolume>(Wasapi.DefaultOutput(), Wasapi.IidVolume);
+                bool m; vol.GetMute(out m); restored = !m;
+            }
+            catch { }
+            Console.WriteLine("audio: {0} bytes capturados, nivel RMS {1:0} (tono a 8000), parlantes silenciados mientras tanto: {2}, sonido devuelto al final: {3}", bytes, rms, mutedWhilePlaying ? "sí" : "no", restored ? "sí" : "NO");
+            return rms > 1000 && mutedWhilePlaying && restored ? 0 : 1;
+        }
+
         static void ApiTest()
         {
             sb.AppendLine("[API local: un programa colgado no frena a los demás]");

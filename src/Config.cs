@@ -26,6 +26,7 @@ namespace Cruce
         public int MoveIntervalUs = 1000;
         public string LocalKeys = "F9";    // keys that never cross: they stay on this PC (e.g. Dictalo's F9)...
         public string LocalKeysApp = "DictadoApp"; // ...but only while this program runs here ("" = always)
+        public bool AudioSend;             // this PC's sound plays on the other PC (and is muted here)
         public string Language = "en";     // UI language: "en" (default) or "es"
         public int PeerPort;               // 0 = same as Port (only differs in local testing)
         public bool TestAcceptInjected;    // testing only: treat synthetic input as real
@@ -56,6 +57,7 @@ namespace Cruce
                 if (kv.TryGetValue("PeerPort", out v)) int.TryParse(v, out c.PeerPort);
                 if (kv.TryGetValue("LocalKeys", out v)) c.LocalKeys = v;
                 if (kv.TryGetValue("LocalKeysApp", out v)) c.LocalKeysApp = v;
+            if (kv.TryGetValue("AudioSend", out v)) c.AudioSend = v == "1" || v.Equals("true", StringComparison.OrdinalIgnoreCase);
             if (kv.TryGetValue("Language", out v)) c.Language = v.Trim().ToLowerInvariant() == "es" ? "es" : "en";
                 if (kv.TryGetValue("TestAcceptInjected", out v)) c.TestAcceptInjected = v == "1";
                 c.Speed = Math.Max(0.25, Math.Min(4, c.Speed));
@@ -100,6 +102,7 @@ namespace Cruce
                 sb.AppendLine("LocalKeys=" + LocalKeys);
                 sb.AppendLine("LocalKeysApp=" + LocalKeysApp);
             sb.AppendLine("Language=" + Language);
+            sb.AppendLine("AudioSend=" + (AudioSend ? "1" : "0"));
                 if (PeerPort != 0) sb.AppendLine("PeerPort=" + PeerPort);
                 if (TestAcceptInjected) sb.AppendLine("TestAcceptInjected=1");
                 var tmp = FilePath + ".tmp";

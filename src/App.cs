@@ -36,6 +36,7 @@ namespace Cruce
                 return SelfTest.Run(args.Contains("--inject"));
             }
             if (args.Length == 2 && args[0] == "--write-icon") { IconArt.WriteIco(args[1]); return 0; }
+            if (args.Contains("--audio-test")) { AttachConsole(-1); Log.Init("cruce-prueba.log"); return SelfTest.AudioTest(); }
             if (args.Length == 4 && args[0] == "--ui-shot") { Native.SetProcessDpiAwarenessContext(new IntPtr(-4)); Log.Init("cruce-prueba.log"); return AppController.UiShot(args[1], args[2] == "es", args[3] == "1"); }
             if (args.Length == 6 && args[0] == "--fake-drop") { Log.Init("cruce-prueba.log"); Native.SetProcessDpiAwarenessContext(new IntPtr(-4)); return SelfTest.FakeDrop(args[1], int.Parse(args[2]), int.Parse(args[3]), args[4], args[5]); }
             if (args.Length == 5 && args[0] == "--fake-peer") { Log.Init("cruce-prueba.log"); return SelfTest.FakePeer(args[1], int.Parse(args[2]), int.Parse(args[3]), args[4]); }
@@ -137,6 +138,8 @@ namespace Cruce
             catch (Exception ex) { Log.Info("no pude preparar el rearranque: {0}", ex.Message); }
         }
 
+        static AppController Current;
+
         [MethodImpl(MethodImplOptions.NoInlining)]
         static int RunApp(string[] args)
         {
@@ -148,9 +151,11 @@ namespace Cruce
                 Log.Info("Windows pidió cerrar la sesión ({0}): Cruce se cierra; si el cierre se cancela, vuelve solo", e.ReasonSessionEnding == ReasonSessionEnding.Shutdown ? "apagado/reinicio" : "cerrar sesión");
                 ArmRelaunchIfSessionSurvives();
                 try { Presence.Stop(); CursorHider.Restore(); } catch { }
+                try { var c = Current; if (c != null) c.StopAudio(); } catch { } // give the speakers back before Windows closes us
                 Thread.Sleep(150); // let the log line reach the file
             };
             var ctl = new AppController(app);
+            Current = ctl;
             ctl.Start(!args.Contains("--tray"));
             app.Run();
             GC.KeepAlive(mutex);
@@ -161,7 +166,7 @@ namespace Cruce
 
     public sealed class AppController
     {
-        public const string Version = "1.32";
+        public const string Version = "1.33";
 
         readonly Application app;
         public readonly Config Cfg;
@@ -216,6 +221,10 @@ namespace Cruce
             var qx = new DispatcherTimer { Interval = TimeSpan.FromSeconds(20) };
             qx.Tick += (s, e) => QosPolicy();
             qx.Start();
+            AudioSender.RestoreMuteIfLeft();
+            var ax = new DispatcherTimer { Interval = TimeSpan.FromSeconds(1) };
+            ax.Tick += (s, e) => AudioPolicy();
+            ax.Start();
             win = new MainWindow(this);
             if (show || string.IsNullOrEmpty(Cfg.Secret)) ShowWindow();
 
@@ -365,6 +374,7 @@ namespace Cruce
                 Engine.AttachLink(l);
                 l.Start();
                 link = l;
+                l.AudioIn = audioIn.Push;
                 clip = new ClipSync(keys, Cfg.Port, () =>
                 {
                     var p = Engine.Peer;
@@ -465,9 +475,45 @@ namespace Cruce
             catch (System.ComponentModel.Win32Exception) { /* UAC cancelled */ }
         }
 
+        // ---- audio: this PC's sound can play on the other PC (and be muted here). Switch per PC, in Settings and the tray.
+        readonly AudioPlayer audioIn = new AudioPlayer();
+        AudioSender audioOut;
+
+        public bool AudioSending { get { return audioOut != null; } }
+
+        public void SetAudioSend(bool on)
+        {
+            Cfg.AudioSend = on;
+            Cfg.Save();
+            Log.Info("audio: mandar el sonido de esta PC a la otra {0}", on ? "ACTIVADO" : "desactivado");
+            AudioPolicy();
+        }
+
+        void AudioPolicy()
+        {
+            var l = link;
+            bool want = Cfg.AudioSend && l != null && l.CurrentPeer != null;
+            if (want && audioOut == null)
+            {
+                audioOut = new AudioSender((b, n) => { var lk = link; if (lk != null) lk.SendAudio(b, n); });
+                audioOut.Start();
+            }
+            else if (!want && audioOut != null) StopAudio();
+            // If this PC is playing the other PC's sound, its own loopback contains it: don't send it back (echo loop).
+            if (audioOut != null) audioOut.Paused = audioIn.Active;
+        }
+
+        public void StopAudio()
+        {
+            var a = audioOut;
+            audioOut = null;
+            if (a != null) a.StopAndWait(800);
+        }
+
         public void Exit()
         {
             Log.Info("exiting");
+            StopAudio();
             if (tray != null) { tray.Dispose(); tray = null; }
             Engine.DetachLink();
             if (link != null) link.Dispose();
@@ -487,7 +533,8 @@ namespace Cruce
     {
         readonly Forms.NotifyIcon ni;
         readonly Icon[] icons;
-        readonly Forms.ToolStripMenuItem status, pause, open, quit;
+        readonly Forms.ToolStripMenuItem status, pause, open, quit, audio;
+        readonly AppController app;
         int lastState = -1;
 
         sealed class DarkColors : Forms.ProfessionalColorTable
@@ -506,6 +553,7 @@ namespace Cruce
 
         public Tray(AppController app)
         {
+            this.app = app;
             int sz = Math.Max(16, Forms.SystemInformation.SmallIconSize.Width);
             icons = new[]
             {
@@ -524,6 +572,8 @@ namespace Cruce
             menu.Items.Add(open);
             pause =new Forms.ToolStripMenuItem(L.T("Pausar el cruce"), null, (s, e) => { app.Engine.Paused = !app.Engine.Paused; });
             menu.Items.Add(pause);
+            audio = new Forms.ToolStripMenuItem(L.T("Escuchar el audio de esta PC en la otra"), null, (s, e) => app.SetAudioSend(!app.Cfg.AudioSend));
+            menu.Items.Add(audio);
             menu.Items.Add(new Forms.ToolStripSeparator());
             quit = new Forms.ToolStripMenuItem(L.T("Salir"), null, (s, e) => app.Exit());
             menu.Items.Add(quit);
@@ -547,6 +597,8 @@ namespace Cruce
             pause.Text = L.T(paused ? "Reanudar el cruce" : "Pausar el cruce");
             open.Text = L.T("Abrir Cruce");
             quit.Text = L.T("Salir");
+            audio.Text = L.T("Escuchar el audio de esta PC en la otra");
+            audio.Checked = app.Cfg.AudioSend;
             if (state != lastState) { ni.Icon = icons[state]; lastState = state; }
         }
 

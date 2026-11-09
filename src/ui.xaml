@@ -432,6 +432,7 @@
           <TextBlock Text="1.00× ya compensa la escala (DPI) de cada pantalla." Style="{StaticResource Hint}"/>
           <CheckBox x:Name="ClipSw" Style="{StaticResource Switch}" Margin="0,16,0,0" Content="Portapapeles compartido (texto e imágenes)"/>
           <CheckBox x:Name="FilesSw" Style="{StaticResource Switch}" Margin="0,12,0,0" Content="Copiar y pegar archivos entre PCs"/>
+          <CheckBox x:Name="AudioSw" Style="{StaticResource Switch}" Margin="0,12,0,0" Content="Escuchar el audio de esta PC en la otra"/>
           <CheckBox x:Name="AutoSw" Style="{StaticResource Switch}" Margin="0,12,0,0" Content="Iniciar con Windows (con permisos de admin)"/>
           <DockPanel Margin="0,12,0,0" LastChildFill="True">
             <Button x:Name="AdminBtn" DockPanel.Dock="Right" Style="{StaticResource Btn}" Content="Reiniciar como admin" Margin="10,0,0,0"/>

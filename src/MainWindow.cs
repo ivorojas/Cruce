@@ -36,7 +36,7 @@ namespace Cruce
         readonly TextBox secretPlain, peerIp;
         readonly Button showSecret, adminBtn;
         readonly Slider speed;
-        readonly CheckBox clipSw, filesSw, autoSw;
+        readonly CheckBox clipSw, filesSw, autoSw, audioSw;
         readonly RadioButton[] sides;
         readonly RadioButton langEn, langEs;
         readonly Border settingsCard;
@@ -83,7 +83,7 @@ namespace Cruce
             secret = F<PasswordBox>("Secret"); secretPlain = F<TextBox>("SecretPlain"); peerIp = F<TextBox>("PeerIp");
             showSecret = F<Button>("ShowSecret"); adminBtn = F<Button>("AdminBtn");
             speed = F<Slider>("Speed");
-            clipSw = F<CheckBox>("ClipSw"); filesSw = F<CheckBox>("FilesSw"); autoSw = F<CheckBox>("AutoSw");
+            clipSw = F<CheckBox>("ClipSw"); filesSw = F<CheckBox>("FilesSw"); autoSw = F<CheckBox>("AutoSw"); audioSw = F<CheckBox>("AudioSw");
             sides = new[] { F<RadioButton>("SideLeft"), F<RadioButton>("SideRight"), F<RadioButton>("SideTop"), F<RadioButton>("SideBottom") };
             langEn = F<RadioButton>("LangEn"); langEs = F<RadioButton>("LangEs");
             settingsCard = F<Border>("SettingsCard"); settingsBtn = F<System.Windows.Controls.Primitives.ToggleButton>("SettingsBtn");
@@ -179,6 +179,7 @@ namespace Cruce
             clipSw.IsChecked = c.Clipboard;
             filesSw.IsChecked = c.Files;
             filesSw.IsEnabled = c.Clipboard;
+            audioSw.IsChecked = c.AudioSend;
             SetSide(c.Side);
             langEn.IsChecked = L.English; langEs.IsChecked = !L.English;
             ShowSettings(string.IsNullOrEmpty(c.Secret));
@@ -228,6 +229,7 @@ namespace Cruce
             clipSw.Click += (s, e) => { app.Cfg.Clipboard = clipSw.IsChecked == true; filesSw.IsEnabled = app.Cfg.Clipboard; app.Cfg.Save(); };
             filesSw.Click += (s, e) => { app.Cfg.Files = filesSw.IsChecked == true; app.Cfg.Save(); };
             autoSw.Click += (s, e) => ToggleAutostart();
+            audioSw.Click += (s, e) => app.SetAudioSend(audioSw.IsChecked == true);
             adminBtn.Click += (s, e) => app.RestartElevated();
             F<Button>("ReportBtn").Click += (s, e) => { try { System.Diagnostics.Process.Start(Metrics.WriteReport(DateTime.Today)); } catch (Exception ex) { Log.Error(ex, "report"); } };
             F<Button>("UpdBtn").Click += (s, e) => app.CheckUpdates(true);
@@ -408,6 +410,7 @@ namespace Cruce
             if ((nowT - lastSample).TotalMilliseconds >= 500) lastSample = nowT;
             if (added && IsVisible) DrawSpark();
 
+            if (!loading && audioSw.IsChecked != app.Cfg.AudioSend) { loading = true; audioSw.IsChecked = app.Cfg.AudioSend; loading = false; } // toggled from the tray
             if (!loading && !sides[(int)app.Cfg.Side].IsChecked.GetValueOrDefault())
             {
                 loading = true; SetSide(app.Cfg.Side); loading = false;

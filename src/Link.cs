@@ -63,7 +63,7 @@ namespace Cruce
     /// </summary>
     public sealed class Link : IDisposable
     {
-        const byte T_HELLO = 1, T_DATA = 2, T_BYE = 3, PROTO = 1;
+        const byte T_HELLO = 1, T_DATA = 2, T_BYE = 3, T_AUDIO = 4, PROTO = 1;
         const int RelBudget = 1100;
         public const int PortSpan = 20; /* if the base port is taken (in use or reserved by Windows), the next free one is used */
         public int BoundPort;
@@ -229,6 +229,20 @@ namespace Cruce
             }
         }
 
+        /// <summary>Audio from the other PC (packet bytes, offset of the payload). Called on the receive thread: keep it quick.</summary>
+        public Action<byte[], int> AudioIn;
+
+        /// <summary>Sends one audio packet (unreliable, like the mouse position: a late one is useless).</summary>
+        public void SendAudio(byte[] payload, int len)
+        {
+            IPEndPoint ep;
+            lock (gate) { if (peer == null) return; ep = peer.Ep; }
+            var plain = new byte[len + 1];
+            plain[0] = T_AUDIO;
+            Buffer.BlockCopy(payload, 0, plain, 1, len);
+            SendRaw(plain, plain.Length, new[] { ep });
+        }
+
         void SendDataLocked(long now)
         {
             if (peer == null) return;
@@ -348,6 +362,7 @@ namespace Cruce
                         case T_HELLO: OnHello(p, new IPEndPoint(src.Address, src.Port), sid, ctr); break;
                         case T_DATA: OnData(p, new IPEndPoint(src.Address, src.Port), sid, ctr); break;
                         case T_BYE: OnBye(p); break;
+                        case T_AUDIO: { var ai = AudioIn; if (ai != null && peer != null) ai(p, 1); break; } // older Cruce versions just ignore type 4
                     }
                 }
                 catch (Exception ex) { Log.Error(ex, "rx"); }
